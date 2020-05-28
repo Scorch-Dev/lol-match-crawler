@@ -1,8 +1,5 @@
 
-extern crate enum_iterator;
 extern crate reqwest;
-extern crate serde;
-
 #[macro_use]
 extern crate error_chain;
 
@@ -24,7 +21,9 @@ fn do_main() -> lol_api::Result<()> {
         None => { usage(); return Err(lol_api::Error::from("".to_string())) }
     }
 
-    ctx.query_summoner_v4_by_summoner_name(lol_api::RegionCode::Na1, "hi")
+    let dto = ctx.query_summoner_v4_by_summoner_name(lol_api::Region::Na1, "hi")?;
+    println!("{:?}", dto);
+    Ok(())
 }
 
 quick_main!(do_main);
