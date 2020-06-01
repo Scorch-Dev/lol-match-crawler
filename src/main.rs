@@ -18,11 +18,13 @@ fn do_main() -> lol_api::Result<()> {
 
     match args.get(1) {
         Some(key) => ctx = lol_api::Context::new(&key),
-        None => { usage(); return Err(lol_api::Error::from("".to_string())) }
+        None => { usage(); return Err(lol_api::Error::from("missing command line argument.".to_string())) }
     }
 
     let dto = ctx.query_summoner_v4_by_summoner_name(lol_api::Region::Na1, "hi")?;
+    let dto_two = ctx.query_summoner_v4_by_account(lol_api::Region::Na1, &dto.account_id)?;
     println!("{:?}", dto);
+    assert_eq!(dto.account_id, dto_two.account_id);
     Ok(())
 }
 
