@@ -59,6 +59,19 @@ struct Endpoint {
 }
 
 impl Endpoint {
+
+    /// constructs empty endpoint with no bucket data
+    /// and status is unkown and the last update timestamp is
+    /// the start of the epoch.StatusCode
+    /// 
+    /// #Remarks
+    /// 
+    /// After construction we rely on the next call to
+    /// update_status_from_response_code (e.g. after the next query)
+    /// to call set_buckets_from_headers() and rollover the
+    /// last update time and populate the buckets. Then we also need
+    /// the caller to use update_status_from_response_code() so that the
+    /// status is no longer `EndpointStatus::Unkown`.
     fn new()->Endpoint {
         Endpoint {
             status : EndpointStatus::Unkown,
@@ -67,6 +80,14 @@ impl Endpoint {
         }
     }
 
+    /// Uses the response headers to update the rate limit buckets and cache
+    /// the most recent rate limiting data. 
+    /// 
+    /// #Remarks 
+    /// 
+    /// This does not check if the data supplied is newer, but will detect
+    /// if we rolled over, and we'll keep track of that.
+    /// 
     fn set_buckets_from_headers(&mut self, limits_str : &str, counts_str :  &str, timestamp : i64) {
 
         let limit_strs = limits_str.split(",");
@@ -99,6 +120,77 @@ impl Endpoint {
         }
     }
 
+
+    /// Based on the current state, moves to the next state given the response
+    /// code of a query to the lol api
+    /// 
+    fn update_status_from_response_code(&mut self, status_code : StatusCode) {
+
+        // we should never be on cooldown after a query, because that means
+        // we allowed a query to go through when the endpoint was on cooldown in the first place
+        // (at least in a syncrhonous setting)
+        assert!(!matches!(self.status, EndpointStatus::Cooldown(_))); 
+
+        match &self.status {
+            EndpointStatus::Normal => self.update_status_from_normal(status_code),
+            EndpointStatus::Unkown => self.update_status_from_unknown(status_code),
+            EndpointStatus::JustOffCooldown(_) => self.update_status_from_just_off_cooldown(status_code),
+            _ => {}
+        }
+    }
+
+    /// The state transition function given that we're in the Normal state
+    /// 
+    fn update_status_from_normal(&mut self, status_code : StatusCode) {
+
+        assert!(matches!(self.status, EndpointStatus::Normal));
+
+        match status_code {
+
+            StatusCode::OK => self.set_status_normal_or_cooldown(),
+            StatusCode::TOO_MANY_REQUESTS => {
+            },
+
+            _ => {}
+        }
+    }
+
+    /// The state transition function given that we're in the JustOffCooldown state
+    /// 
+    fn update_status_from_just_off_cooldown(&mut self, status_code : StatusCode) {
+
+        assert!(matches!(self.status, EndpointStatus::JustOffCooldown(_)));
+
+        match status_code{
+
+            // potentially we could come off cooldown only to hit another rate limit on a different bucket
+            StatusCode::OK => self.set_status_normal_or_cooldown(),
+
+            // extend the cooldown and cooldown again
+            StatusCode::TOO_MANY_REQUESTS => {
+                if let EndpointStatus::JustOffCooldown(prev_duration) = self.status {
+                    self.status = EndpointStatus::Cooldown(CooldownState::new(prev_duration.checked_mul(2).unwrap()));
+                }
+            },
+
+            _ => {}
+        }
+    }
+
+    fn update_status_from_unknown(&mut self, status_code : StatusCode) {
+
+        assert!(matches!(self.status, EndpointStatus::Unkown));
+
+        match status_code{
+            StatusCode::OK => self.set_status_normal_or_cooldown(),
+            _ => {}
+        }
+    }
+
+    /// Decides whether or not we need to set ourselves to cooldown,
+    /// and, if so, returns a new cooldown to use for settign the new
+    /// status.
+    /// 
     fn should_cooldown(&self) -> Option<CooldownState> {
         for (bucket_size, bucket) in self.rate_limit_buckets.iter() {
             if bucket.count == bucket.max_count {
@@ -108,6 +200,18 @@ impl Endpoint {
 
         None
     }
+
+    /// Convenience function that saves some typing
+    /// 
+    fn set_status_normal_or_cooldown(&mut self) {
+        if let Some(cd_state) = self.should_cooldown() {
+            self.status = EndpointStatus::Cooldown(cd_state);
+        }
+        else {
+            self.status = EndpointStatus::Normal;
+        }
+    }
+
 }
 
 #[derive(Debug)]
@@ -179,48 +283,34 @@ impl Context {
     fn send_query(&mut self, uri : &str, region : Region, service : Service, method_id : u32)->Result<Response> {
 
         self.prepare_to_query(region, service, method_id)?;
-
         let response = self.client.get(uri)
             .header("X-Riot-Token", &self.api_key)
             .send()?;
+        self.handle_response(response, region, service, method_id)
+    }
 
-        self.handle_response(&response, region, service, method_id);
+    /// Call this after the query is sent to handle any internal state
+    /// updates using the response.
+    /// 
+    /// > **NOTE**: this will consume the response proivded so call it last
+    /// 
+    fn handle_response(
+        &mut self, response : Response, region : Region, service : Service, method_id : u32) -> Result<Response> {
+        
+        // do any extra work or update internal state first
+        match response.status() {
+            StatusCode::OK => self.cache_rate_limits(&response, region, service, method_id),
+            _ => { }
+        }
 
+        //now that internal state is updated, make a state transition for endpoints
+        self.handle_status_transitions(response.status(), region, service, method_id);
+
+        // convert to error if required
         match response.error_for_status() {
             Err(e) => Err(Error::from(e)),
             Ok(r) => Ok(r),
         }
-    }
-
-    fn handle_response(
-        &mut self, response : &Response, region : Region, service : Service, method_id : u32) {
-        
-        match response.status() {
-
-            StatusCode::OK =>
-                self.handle_response_200(&response, region, service, method_id),
-
-            StatusCode::TOO_MANY_REQUESTS =>
-                self.handle_response_429(&response, region, service, method_id),
-
-            _ => { }
-        }
-    }
-
-    fn handle_response_200(
-        &mut self, response : &Response, region : Region, service : Service, method_id : u32) {
-
-        self.cache_rate_limits(response, region, service, method_id);
-        self.handle_status_transitions(response, region, service, method_id,
-            &Self::handle_response_200_status_transitions);
-    }
-
-    fn handle_response_429(
-        &mut self, response : &Response, region : Region, service : Service, method_id : u32) {
-
-        self.handle_status_transitions(
-            response, region, service, method_id, 
-            &Self::handle_response_429_status_transitions);
     }
 
     /// Helper method to avoid retyping the same thing over and over. Takes a state transition function
@@ -228,56 +318,20 @@ impl Context {
     /// transition function uses the result and the current status of any given endpoint to alter the endpoints
     /// current status.
     /// 
-    fn handle_status_transitions(&mut self, response : &Response, region : Region, service : Service, method_id : u32, 
-        transition_func : &dyn Fn(&Response, &mut Endpoint)) {
-        
+    fn handle_status_transitions(&mut self, 
+        status_code : StatusCode, region : Region, service : Service, method_id : u32){
+
         {
             let region_ep  = self.endpoints.get_mut(&region_id_to_endpoint_id(region)).unwrap();
-            transition_func(&response, region_ep);
+            region_ep.update_status_from_response_code(status_code);
         }
         {
             let service_ep = self.endpoints.get_mut(&service_id_to_endpoint_id(service)).unwrap();
-            transition_func(&response, service_ep);
+            service_ep.update_status_from_response_code(status_code);
         }
         {
             let method_ep  = self.endpoints.get_mut(&method_id_to_endpoint_id(service, method_id)).unwrap();
-            transition_func(&response, method_ep);
-        }
-    }
-
-    /// updates status field for an endpoint based on the response if the status code was 200
-    /// 
-    fn handle_response_200_status_transitions(response : &Response, endpoint : &mut Endpoint) {
-
-        assert_eq!(response.status(), StatusCode::OK);
-
-        match &endpoint.status {
-
-            EndpointStatus::Normal => {
-                if let Some(cd_state) = endpoint.should_cooldown() {
-                    endpoint.status = EndpointStatus::Cooldown(cd_state);
-                }
-            },
-
-            EndpointStatus::JustOffCooldown(_) | EndpointStatus::Unkown =>
-                endpoint.status = EndpointStatus::Normal,
-
-            _ => { panic!("Endpoint was in an invalid state after the query finished!") }
-        }
-    }
-
-    /// Runs the state transition table for a 429 response on the given endpoint
-    /// 
-    fn handle_response_429_status_transitions(response : &Response, endpoint : &mut Endpoint) {
-
-        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
-
-        match &endpoint.status {
-
-            EndpointStatus::JustOffCooldown(duration) => 
-                endpoint.status = EndpointStatus::Cooldown(CooldownState::new(duration.checked_mul(2).unwrap())),
-
-            _ => {}
+            method_ep.update_status_from_response_code(status_code);
         }
     }
 
@@ -362,6 +416,9 @@ impl Context {
         Ok(())
     }
 
+    /// Updates endpoint status prior to sending a query.
+    /// Currently just checks for an expired cooldown and transitions to just off cooldown
+    /// 
     fn pre_query_update_endpoint(endpoint : &mut Endpoint) {
         match &endpoint.status {
             EndpointStatus::Cooldown(cd_state) if cd_state.is_expired() => {
@@ -371,17 +428,33 @@ impl Context {
         }
     }
 
+    /// Checks that an endpoint is ready to be queried. 
+    /// If it isn't returns an error.
+    /// 
+    /// # Remarks
+    /// 
+    /// In general a valid endpoint is one in the state:
+    /// * `Unkown` - haven't queried this endpoint yet, so we'll use this query as a probe
+    /// * `Normal` - g2g as far as we can tell based on received responses
+    /// * `JustOffCooldown` - just came off a cooldown but may potentially 429 again
     fn pre_query_validate_endpoint(endpoint : &mut Endpoint)->Result<()> {
         match &endpoint.status {
-            EndpointStatus::Normal | EndpointStatus::Unkown => Ok(()),
+            EndpointStatus::Normal | EndpointStatus::Unkown | EndpointStatus::JustOffCooldown(_) => Ok(()),
             s => Err(Error::from(ErrorKind::from(format!("{:?}", s)))),
         }
     }
 
-    // Errors that may be recoverable with naive retry
-    // Errors that may be recoverable with backing off then retry
-    // Non-recoverable Errors (usually programmer error)
-
+    /// Takes the region enum and provides the formatted uri
+    /// that prefixes calls to services in this region
+    /// 
+    /// #Arguments
+    /// 
+    /// `region` - the region to construct a query prefix string for
+    /// 
+    /// #Return
+    /// 
+    /// The formatted uri for the api 
+    /// (e.g. https://na1.api.riotgames.com)
     fn region_uri(region : Region)->String {
         format!("https://{:?}.api.riotgames.com", region)
     }
