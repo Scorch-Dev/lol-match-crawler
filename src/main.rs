@@ -2,6 +2,9 @@
 extern crate reqwest;
 #[macro_use]
 extern crate error_chain;
+extern crate strum;
+#[macro_use]
+extern crate strum_macros;
 
 mod lol_api;
 use std::env;
@@ -21,10 +24,11 @@ fn do_main() -> lol_api::Result<()> {
         None => { usage(); return Err(lol_api::Error::from("missing command line argument.".to_string())) }
     }
 
-    let dto = ctx.query_summoner_v4_by_summoner_name(lol_api::Region::Na1, "hi")?;
-    let dto_two = ctx.query_summoner_v4_by_account(lol_api::Region::Na1, &dto.account_id)?;
-    println!("{:?}", dto);
-    assert_eq!(dto.account_id, dto_two.account_id);
+    for _ in 0..90 {
+        let dto = ctx.query_summoner_v4_by_summoner_name(lol_api::Region::Na1, "hi")?;
+        let dto_two = ctx.query_summoner_v4_by_account(lol_api::Region::Na1, &dto.account_id)?;
+        assert_eq!(dto.account_id, dto_two.account_id);
+    }
     Ok(())
 }
 
