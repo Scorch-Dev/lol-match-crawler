@@ -4,215 +4,16 @@ use chrono::DateTime;
 use reqwest::blocking::{Client, Response};
 use reqwest::StatusCode;
 use std::collections::HashMap;
-use std::time::{Instant, Duration};
 
 // my mods
 mod services;
+mod endpoint;
 mod errors;
 
 pub use errors::*;
 use services::summoner_v4;
+use endpoint::Endpoint;
 
-#[derive(Debug)]
-enum EndpointStatus {
-    Unkown,                      // Used at initialization mostly
-    Normal,                      // Go ahead and request at will
-    Cooldown(CooldownState),     // The instant we started cooldown and the duration
-    JustOffCooldown(Duration),   // State is unkown but we just got off a cooldown of the given duration
-}
-
-#[derive(Debug)]
-struct CooldownState {
-    start : Instant,
-    duration : Duration,
-}
-
-impl CooldownState {
-    fn new(duration : Duration)->CooldownState {
-        CooldownState {
-            start : Instant::now(),
-            duration : duration,
-        }
-    }
-
-    fn is_expired(&self) -> bool {
-        let since_started = Instant::now().duration_since(self.start);
-        match since_started.checked_sub(self.duration) {
-            Some(_) => true,
-            None => false,
-        }
-    }
-}
-
-#[derive(Debug)]
-struct RateLimitBucket {
-    count : u64,           // count so far
-    max_count : u64,       // max before rate limiting
-    start_timestamp : i64, // estimate of the start time based on last rollover in ms
-}
-
-#[derive(Debug)]
-struct Endpoint {
-    status : EndpointStatus,                              // state of this level
-    rate_limit_buckets : HashMap<u64, RateLimitBucket>, // map bucket duration to limit
-    last_update_timestamp_ms : i64,
-}
-
-impl Endpoint {
-
-    /// constructs empty endpoint with no bucket data
-    /// and status is unkown and the last update timestamp is
-    /// the start of the epoch.StatusCode
-    /// 
-    /// #Remarks
-    /// 
-    /// After construction we rely on the next call to
-    /// update_status_from_response_code (e.g. after the next query)
-    /// to call set_buckets_from_headers() and rollover the
-    /// last update time and populate the buckets. Then we also need
-    /// the caller to use update_status_from_response_code() so that the
-    /// status is no longer `EndpointStatus::Unkown`.
-    fn new()->Endpoint {
-        Endpoint {
-            status : EndpointStatus::Unkown,
-            rate_limit_buckets : HashMap::new(),
-            last_update_timestamp_ms : 0i64,
-        }
-    }
-
-    /// Uses the response headers to update the rate limit buckets and cache
-    /// the most recent rate limiting data. 
-    /// 
-    /// #Remarks 
-    /// 
-    /// This does not check if the data supplied is newer, but will detect
-    /// if we rolled over, and we'll keep track of that.
-    /// 
-    fn set_buckets_from_headers(&mut self, limits_str : &str, counts_str :  &str, timestamp : i64) {
-
-        let limit_strs = limits_str.split(",");
-        let count_strs = counts_str.split(",");
-
-        // first just update rate limits
-        self.rate_limit_buckets.clear(); // in the future, only update when required
-        for limit_str in limit_strs {
-            let limit = limit_str.split(":").nth(0).unwrap().parse::<u64>().unwrap();
-            let bucket_size = limit_str.split(":").nth(1).unwrap().parse::<u64>().unwrap();
-            let mut bucket = self.rate_limit_buckets.entry(bucket_size)
-                .or_insert(RateLimitBucket {
-                    count : 0,
-                    max_count : 0,
-                    start_timestamp : chrono::Utc::now().timestamp_millis(),
-                });
-            bucket.max_count = limit;
-        }
-
-        // set counts for existing buckets... They better exist by now
-        for count_str in count_strs {
-            let count = count_str.split(":").nth(0).unwrap().parse::<u64>().unwrap();
-            let bucket_size = count_str.split(":").nth(1).unwrap().parse::<u64>().unwrap();
-            let bucket = self.rate_limit_buckets.get_mut(&bucket_size).unwrap();
-
-            if bucket.count > count { //detect rollover
-                bucket.start_timestamp = timestamp;
-            }
-            bucket.count = count;
-        }
-    }
-
-
-    /// Based on the current state, moves to the next state given the response
-    /// code of a query to the lol api
-    /// 
-    fn update_status_from_response_code(&mut self, status_code : StatusCode) {
-
-        // we should never be on cooldown after a query, because that means
-        // we allowed a query to go through when the endpoint was on cooldown in the first place
-        // (at least in a syncrhonous setting)
-        assert!(!matches!(self.status, EndpointStatus::Cooldown(_))); 
-
-        match &self.status {
-            EndpointStatus::Normal => self.update_status_from_normal(status_code),
-            EndpointStatus::Unkown => self.update_status_from_unknown(status_code),
-            EndpointStatus::JustOffCooldown(_) => self.update_status_from_just_off_cooldown(status_code),
-            _ => {}
-        }
-    }
-
-    /// The state transition function given that we're in the Normal state
-    /// 
-    fn update_status_from_normal(&mut self, status_code : StatusCode) {
-
-        assert!(matches!(self.status, EndpointStatus::Normal));
-
-        match status_code {
-
-            StatusCode::OK => self.set_status_normal_or_cooldown(),
-            StatusCode::TOO_MANY_REQUESTS => {
-            },
-
-            _ => {}
-        }
-    }
-
-    /// The state transition function given that we're in the JustOffCooldown state
-    /// 
-    fn update_status_from_just_off_cooldown(&mut self, status_code : StatusCode) {
-
-        assert!(matches!(self.status, EndpointStatus::JustOffCooldown(_)));
-
-        match status_code{
-
-            // potentially we could come off cooldown only to hit another rate limit on a different bucket
-            StatusCode::OK => self.set_status_normal_or_cooldown(),
-
-            // extend the cooldown and cooldown again
-            StatusCode::TOO_MANY_REQUESTS => {
-                if let EndpointStatus::JustOffCooldown(prev_duration) = self.status {
-                    self.status = EndpointStatus::Cooldown(CooldownState::new(prev_duration.checked_mul(2).unwrap()));
-                }
-            },
-
-            _ => {}
-        }
-    }
-
-    fn update_status_from_unknown(&mut self, status_code : StatusCode) {
-
-        assert!(matches!(self.status, EndpointStatus::Unkown));
-
-        match status_code{
-            StatusCode::OK => self.set_status_normal_or_cooldown(),
-            _ => {}
-        }
-    }
-
-    /// Decides whether or not we need to set ourselves to cooldown,
-    /// and, if so, returns a new cooldown to use for settign the new
-    /// status.
-    /// 
-    fn should_cooldown(&self) -> Option<CooldownState> {
-        for (bucket_size, bucket) in self.rate_limit_buckets.iter() {
-            if bucket.count == bucket.max_count {
-                return Some(CooldownState::new(Duration::from_secs(*bucket_size)));
-            }
-        }
-
-        None
-    }
-
-    /// Convenience function that saves some typing
-    /// 
-    fn set_status_normal_or_cooldown(&mut self) {
-        if let Some(cd_state) = self.should_cooldown() {
-            self.status = EndpointStatus::Cooldown(cd_state);
-        }
-        else {
-            self.status = EndpointStatus::Normal;
-        }
-    }
-
-}
 
 #[derive(Debug)]
 pub struct Context {
@@ -299,7 +100,7 @@ impl Context {
         
         // do any extra work or update internal state first
         match response.status() {
-            StatusCode::OK => self.cache_rate_limits(&response, region, service, method_id),
+            StatusCode::OK => self.cache_rate_limits(&response, region, service, method_id)?,
             _ => { }
         }
 
@@ -308,7 +109,7 @@ impl Context {
 
         // convert to error if required
         match response.error_for_status() {
-            Err(e) => Err(Error::from(e)),
+            Err(e) => { println!("{:?}", self.endpoints.get(&region_id_to_endpoint_id(region))); Err(Error::from(e)) },
             Ok(r) => Ok(r),
         }
     }
@@ -349,7 +150,7 @@ impl Context {
     /// This is used only after receiving a 200 OK and should not be used elsewhere, for it
     /// will panic. This is separately in its own function primarily for convenience/readability.
     fn cache_rate_limits(
-        &mut self, response : &Response, region : Region, service : Service, method_id : u32) {
+        &mut self, response : &Response, region : Region, service : Service, method_id : u32) -> Result<()> {
 
         let date_str = response.headers().get("Date").unwrap().to_str().unwrap();
         let timestamp_ms = DateTime::parse_from_rfc2822(date_str).unwrap().timestamp_millis();
@@ -358,28 +159,61 @@ impl Context {
         // cache app limits if more recent
         {
             let region_ep  = self.endpoints.get_mut(&region_id_to_endpoint_id(region)).unwrap();
-            if timestamp_ms >= region_ep.last_update_timestamp_ms {
+            if timestamp_ms >= region_ep.last_update_timestamp_ms() {
 
-                let rate_limits = response.headers().get("X-App-Rate-Limit").unwrap().to_str().unwrap();
-                let rate_limit_counts = response.headers().get("X-App-Rate-Limit-Count").unwrap().to_str().unwrap();
+                let limits = Self::get_header_as_rate_limit(&response, "X-App-Rate-Limit")?;
+                let counts = Self::get_header_as_rate_limit(&response, "X-App-Rate-Limit-Count")?;
 
-                region_ep.set_buckets_from_headers(rate_limits, rate_limit_counts, timestamp_ms);
-                region_ep.last_update_timestamp_ms = timestamp_ms;
+                region_ep.update_buckets(&limits, &counts, timestamp_ms);
             }
         }
 
         // cache method limits if more recent
         {
             let method_ep  = self.endpoints.get_mut(&method_id_to_endpoint_id(service, method_id)).unwrap();
-            if timestamp_ms >= method_ep.last_update_timestamp_ms {
+            if timestamp_ms >= method_ep.last_update_timestamp_ms() {
 
-                let rate_limits = response.headers().get("X-Method-Rate-Limit").unwrap().to_str().unwrap();
-                let rate_limit_counts = response.headers().get("X-Method-Rate-Limit-Count").unwrap().to_str().unwrap();
+                let limits = Self::get_header_as_rate_limit(&response, "X-Method-Rate-Limit")?;
+                let counts = Self::get_header_as_rate_limit(&response, "X-Method-Rate-Limit-Count")?;
 
-                method_ep.set_buckets_from_headers(rate_limits, rate_limit_counts, timestamp_ms);
-                method_ep.last_update_timestamp_ms = timestamp_ms;
+                method_ep.update_buckets(&limits, &counts, timestamp_ms);
             }
         }
+
+        Ok(())
+    }
+
+    /// A little helper to do some error checking while we get the header
+    /// and reduce verbosity/typing in other functions
+    fn get_header_as_str(response : &Response, header_name : &str) -> Result<String> {
+
+        let header_val = response.headers().get(header_name)
+                         .chain_err(|| format!("Header {} not found.", header_name))?;
+        Ok(header_val.to_str()?.to_string())
+    }
+    
+    /// Takes a formatted rate limit string from the response header
+    /// and parses it to u64 pair. format is
+    /// `<item1>:<item2>,<item3>:<item4>` in general. That is items
+    /// are separated by `:` and pairs are separated by `,`
+    /// 
+    fn get_header_as_rate_limit(response : &Response, header_name : &str) -> Result<Vec<(u64,u64)>> {
+        
+        let limit_str = Self::get_header_as_str(&response, header_name)?;
+
+        limit_str.split(",")
+            .map(|item| {
+                let mut split = item.split(":");
+                
+                if let (Some(first), Some(second)) = (split.next(), split.next()) {
+                    let n1 = first.parse::<u64>().chain_err(|| "Could not parse rate limit string!")?;
+                    let n2 = second.parse::<u64>().chain_err(|| "Could not parse rate limit string!")?;
+                    Ok((n1,n2))
+                }
+                else {
+                    Err(Error::from("Could not parse rate limit string!"))
+                }
+            }).collect()
     }
 
     /// Updates some internal state prior to making the query to ensure that the endpoint we are about to
@@ -393,55 +227,27 @@ impl Context {
         {
             let region_ep  = self.endpoints.entry(region_id_to_endpoint_id(region))
                 .or_insert(Endpoint::new());
-            Self::pre_query_update_endpoint(region_ep);
-            Self::pre_query_validate_endpoint(region_ep)?;
+            region_ep.update_status_pre_query();
+            if region_ep.can_query() == false { return Err(Error::from(ErrorKind::from(region_ep.status()))); }
         }
 
         // update + check service
         {
             let service_ep  = self.endpoints.entry(service_id_to_endpoint_id(service))
                 .or_insert(Endpoint::new());
-            Self::pre_query_update_endpoint(service_ep);
-            Self::pre_query_validate_endpoint(service_ep)?;
+            service_ep.update_status_pre_query();
+            if service_ep.can_query() == false { return Err(Error::from(ErrorKind::from(service_ep.status()))); }
         }
 
         // update + check method
         {
             let method_ep  = self.endpoints.entry(method_id_to_endpoint_id(service, method_id))
                 .or_insert(Endpoint::new());
-            Self::pre_query_update_endpoint(method_ep);
-            Self::pre_query_validate_endpoint(method_ep)?;
+            method_ep.update_status_pre_query();
+            if method_ep.can_query() == false { return Err(Error::from(ErrorKind::from(method_ep.status()))); }
         }
 
         Ok(())
-    }
-
-    /// Updates endpoint status prior to sending a query.
-    /// Currently just checks for an expired cooldown and transitions to just off cooldown
-    /// 
-    fn pre_query_update_endpoint(endpoint : &mut Endpoint) {
-        match &endpoint.status {
-            EndpointStatus::Cooldown(cd_state) if cd_state.is_expired() => {
-                endpoint.status = EndpointStatus::JustOffCooldown(cd_state.duration); //just because we expired, doesn't guarentee normal, the cooldown was a guess
-            },
-            _ => {}
-        }
-    }
-
-    /// Checks that an endpoint is ready to be queried. 
-    /// If it isn't returns an error.
-    /// 
-    /// # Remarks
-    /// 
-    /// In general a valid endpoint is one in the state:
-    /// * `Unkown` - haven't queried this endpoint yet, so we'll use this query as a probe
-    /// * `Normal` - g2g as far as we can tell based on received responses
-    /// * `JustOffCooldown` - just came off a cooldown but may potentially 429 again
-    fn pre_query_validate_endpoint(endpoint : &mut Endpoint)->Result<()> {
-        match &endpoint.status {
-            EndpointStatus::Normal | EndpointStatus::Unkown | EndpointStatus::JustOffCooldown(_) => Ok(()),
-            s => Err(Error::from(ErrorKind::from(format!("{:?}", s)))),
-        }
     }
 
     /// Takes the region enum and provides the formatted uri
