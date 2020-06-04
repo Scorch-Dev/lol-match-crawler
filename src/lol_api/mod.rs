@@ -1,3 +1,13 @@
+//! The lol_api module is a way to interface with the
+//! league of legends api in a friendly way that takes into
+//! account rate limits and bad responses. Currently,
+//! none of these methods are thread-safe. 
+//! 
+//! Most of the methods are for querying the api without
+//! having to deal with things like Http or networking
+//! code or excessive error checking and rate-limit
+//! checking.
+//! 
 
 // external uses
 use chrono::DateTime;
@@ -5,7 +15,7 @@ use reqwest::blocking::{Client, Response};
 use reqwest::StatusCode;
 use std::collections::HashMap;
 
-// my mods
+// my mods/uses
 mod services;
 mod endpoint;
 mod errors;
@@ -14,7 +24,25 @@ pub use errors::*;
 use services::summoner_v4;
 use endpoint::Endpoint;
 
-
+/// The context we construct to guess the state
+/// of the various endpoints within the league of legends
+/// api. We can use the context to make queries to the
+/// api in a safer, easier manner while keeping track
+/// of rate limits and such.
+/// 
+/// # Remarks
+/// 
+/// The endpoints are  hierarchical (e.g. the na1 endpoint has
+/// many service endpoints which each have method endpoints).
+/// We keep a flat hashmap of all the endpoints for the LoL
+/// api even though they are hierarchically ordered. This is
+/// since working with hierarchical data structures in safe rust
+/// is a bit cumbersome, so we opt for a clever indexing
+/// scheme which models the hierarchical structure of the endpoints.
+/// The indexing scheme reserves the first Num(regions) IDs for
+/// region endpoints, then the next Num(services) IDs for
+/// service endpoints, then up to MAX_METHODS_PER_SERVICE for
+/// each method endpoint after that.
 #[derive(Debug)]
 pub struct Context {
     endpoints : HashMap<usize, Endpoint>,
@@ -22,33 +50,64 @@ pub struct Context {
     client : Client
 }
 
-// used to identify region
+/// used to identify region. Can be readily convered into a u32
+/// with the as operator, and is guarenteed to be a safe conversion.
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, EnumIter, EnumCount)]
 pub enum Region {
     Na1 = 0,
 }
 
+/// used to identify the service. Can be readily convered into a u32
+/// with the as operator, and is guarenteed to be a safe conversion.
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, EnumIter, EnumCount)]
 pub enum Service {
     SummonerV4 = 0,
 }
 
-const MAX_METHODS_PER_SERVICE : usize = 128; //need this since each service has its own methods
+const MAX_METHODS_PER_SERVICE : usize = 128; //need this since each service has its own methods enum
 
+/// converts a `Region` enum value to its id value in the endpoints
+/// HashMap.
+/// 
+/// # Arguments
+/// 
+/// region : the `Region` value of the region endpoint
 fn region_id_to_endpoint_id(region : Region) -> usize {
     region as usize
 }
 
+/// converts a `Service` enum value to its id value in the `endpoints`
+/// HashMap.
+/// 
+/// # Arguments
+/// 
+/// service : the `Service` value of the service endpoint
 fn service_id_to_endpoint_id(service : Service) -> usize {
     REGION_COUNT + (service as usize)
 }
 
+/// converts a method enum's u32 representation
+/// to its id value in the `endpoints` HashMap.
+/// 
+/// # Remarks
+/// 
+/// we use the u32 representation of the method
+/// since each service has its own methods. E.g.
+/// method 0 is different for the service SummonerV4
+/// from the method 0 of the League service.
+/// 
+/// # Arguments
+/// 
+/// service : the service to which this method belongs
+/// method_id : the u32 representation of the method endpoint
 fn method_id_to_endpoint_id(service : Service, method_id : u32) -> usize {
     REGION_COUNT + SERVICE_COUNT + ((service as usize) * MAX_METHODS_PER_SERVICE) + (method_id as usize)
 }
 
 impl Context {
 
+    /// Constructs a new lol api
+    /// 
     pub fn new(api_key : &str) -> Context {
         Context{
             endpoints : HashMap::new(),
@@ -81,6 +140,8 @@ impl Context {
     /// sends the request, blocks, caches rate-limiting related information,
     /// then returns the server response. If anything happens along the way or the server responds with
     /// anything but 200 - OK we return the error.
+    /// 
+    /// # Arguments
     fn send_query(&mut self, uri : &str, region : Region, service : Service, method_id : u32)->Result<Response> {
 
         self.prepare_to_query(region, service, method_id)?;
@@ -95,6 +156,17 @@ impl Context {
     /// 
     /// > **NOTE**: this will consume the response proivded so call it last
     /// 
+    /// # Arguments
+    /// 
+    /// `response` : the server response
+    /// `region` : the region endpoint identifier
+    /// `service` : the service endpoint identifier
+    /// `method_id` : the method identifier as a u32 for the service
+    /// 
+    /// # Return
+    /// 
+    /// A `Result`, which is the `Response` provided as an argument 
+    /// if there was no error, otherwise returns the error.
     fn handle_response(
         &mut self, response : Response, region : Region, service : Service, method_id : u32) -> Result<Response> {
         
@@ -119,6 +191,12 @@ impl Context {
     /// transition function uses the result and the current status of any given endpoint to alter the endpoints
     /// current status.
     /// 
+    /// # Arguments
+    /// 
+    /// `status_code` : the status code the server responded with
+    /// `region` : the region endpoint identifier
+    /// `service` : the service endpoint identifier
+    /// `method_id` : the method identifier as a u32 for the service
     fn handle_status_transitions(&mut self, 
         status_code : StatusCode, region : Region, service : Service, method_id : u32){
 
@@ -185,6 +263,16 @@ impl Context {
 
     /// A little helper to do some error checking while we get the header
     /// and reduce verbosity/typing in other functions
+    /// 
+    /// # Arguments
+    /// 
+    /// `response` : the `Response` object we received
+    /// `header_naem` : the name of the header to pull
+    /// 
+    /// # Return
+    /// 
+    /// The header value as a new String object or an error
+    /// if the conversion failed.
     fn get_header_as_str(response : &Response, header_name : &str) -> Result<String> {
 
         let header_val = response.headers().get(header_name)
@@ -197,6 +285,15 @@ impl Context {
     /// `<item1>:<item2>,<item3>:<item4>` in general. That is items
     /// are separated by `:` and pairs are separated by `,`
     /// 
+    /// # Arguments
+    /// 
+    /// `response` : the `Response` object we received
+    /// `header_naem` : the name of the header to pull
+    /// 
+    /// # Return
+    /// 
+    /// The header value as a Vec(limit,bucket_size) on success
+    /// or an error if the parse failed.
     fn get_header_as_rate_limit(response : &Response, header_name : &str) -> Result<Vec<(u64,u64)>> {
         
         let limit_str = Self::get_header_as_str(&response, header_name)?;
@@ -220,6 +317,15 @@ impl Context {
     /// query is g2g (e.g. not on cooldown or the lol servers exploded or something)
     /// 
     /// # Arguments
+    /// 
+    /// `region` : the region endpoint identifier
+    /// `service` : the service endpoint identifier
+    /// `method_id` : the method identifier as a u32 for the service
+    /// 
+    /// # Return
+    /// 
+    /// Gives a `Result` containin `()` on success, and
+    /// an error on failure.
     fn prepare_to_query(
         &mut self, region : Region, service : Service, method_id : u32) -> Result<()>{
 
