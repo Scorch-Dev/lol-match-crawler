@@ -19,11 +19,14 @@
 //! time unit).
 //! 
 
-
 // external uses
 use std::collections::HashMap;
 use std::time::{Instant, Duration};
 use reqwest::StatusCode;
+
+// my mods
+mod id;
+pub use id::{IdType, Region, Service, region_id, service_id, method_id};
 
 /// The status allows us to keep track of
 /// the latent state of the endpoint based

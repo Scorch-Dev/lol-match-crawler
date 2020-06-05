@@ -7,7 +7,6 @@
 //! having to deal with things like Http or networking
 //! code or excessive error checking and rate-limit
 //! checking.
-//! 
 
 // external uses
 use chrono::DateTime;
@@ -21,87 +20,21 @@ mod endpoint;
 mod errors;
 
 pub use errors::*;
+pub use endpoint::{Region, Service};
+
 use services::summoner_v4;
-use endpoint::Endpoint;
+use endpoint::{Endpoint, IdType, region_id, service_id, method_id};
 
 /// The context we construct to guess the state
 /// of the various endpoints within the league of legends
 /// api. We can use the context to make queries to the
 /// api in a safer, easier manner while keeping track
 /// of rate limits and such.
-/// 
-/// # Remarks
-/// 
-/// The endpoints are  hierarchical (e.g. the na1 endpoint has
-/// many service endpoints which each have method endpoints).
-/// We keep a flat hashmap of all the endpoints for the LoL
-/// api even though they are hierarchically ordered. This is
-/// since working with hierarchical data structures in safe rust
-/// is a bit cumbersome, so we opt for a clever indexing
-/// scheme which models the hierarchical structure of the endpoints.
-/// The indexing scheme reserves the first Num(regions) IDs for
-/// region endpoints, then the next Num(services) IDs for
-/// service endpoints, then up to MAX_METHODS_PER_SERVICE for
-/// each method endpoint after that.
 #[derive(Debug)]
 pub struct Context {
-    endpoints : HashMap<usize, Endpoint>,
+    endpoints : HashMap<IdType, Endpoint>,
     api_key : String,
     client : Client
-}
-
-/// used to identify region. Can be readily convered into a u32
-/// with the as operator, and is guarenteed to be a safe conversion.
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, EnumIter, EnumCount)]
-pub enum Region {
-    Na1 = 0,
-}
-
-/// used to identify the service. Can be readily convered into a u32
-/// with the as operator, and is guarenteed to be a safe conversion.
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, EnumIter, EnumCount)]
-pub enum Service {
-    SummonerV4 = 0,
-}
-
-const MAX_METHODS_PER_SERVICE : usize = 128; //need this since each service has its own methods enum
-
-/// converts a `Region` enum value to its id value in the endpoints
-/// HashMap.
-/// 
-/// # Arguments
-/// 
-/// region : the `Region` value of the region endpoint
-fn region_id_to_endpoint_id(region : Region) -> usize {
-    region as usize
-}
-
-/// converts a `Service` enum value to its id value in the `endpoints`
-/// HashMap.
-/// 
-/// # Arguments
-/// 
-/// service : the `Service` value of the service endpoint
-fn service_id_to_endpoint_id(service : Service) -> usize {
-    REGION_COUNT + (service as usize)
-}
-
-/// converts a method enum's u32 representation
-/// to its id value in the `endpoints` HashMap.
-/// 
-/// # Remarks
-/// 
-/// we use the u32 representation of the method
-/// since each service has its own methods. E.g.
-/// method 0 is different for the service SummonerV4
-/// from the method 0 of the League service.
-/// 
-/// # Arguments
-/// 
-/// service : the service to which this method belongs
-/// method_id : the u32 representation of the method endpoint
-fn method_id_to_endpoint_id(service : Service, method_id : u32) -> usize {
-    REGION_COUNT + SERVICE_COUNT + ((service as usize) * MAX_METHODS_PER_SERVICE) + (method_id as usize)
 }
 
 impl Context {
@@ -142,13 +75,13 @@ impl Context {
     /// anything but 200 - OK we return the error.
     /// 
     /// # Arguments
-    fn send_query(&mut self, uri : &str, region : Region, service : Service, method_id : u32)->Result<Response> {
+    fn send_query(&mut self, uri : &str, region : Region, service : Service, method : u32)->Result<Response> {
 
-        self.prepare_to_query(region, service, method_id)?;
+        self.prepare_to_query(region, service, method)?;
         let response = self.client.get(uri)
             .header("X-Riot-Token", &self.api_key)
             .send()?;
-        self.handle_response(response, region, service, method_id)
+        self.handle_response(response, region, service, method)
     }
 
     /// Call this after the query is sent to handle any internal state
@@ -161,27 +94,27 @@ impl Context {
     /// `response` : the server response
     /// `region` : the region endpoint identifier
     /// `service` : the service endpoint identifier
-    /// `method_id` : the method identifier as a u32 for the service
+    /// `method` : the method identifier as a u32 for the service
     /// 
     /// # Return
     /// 
     /// A `Result`, which is the `Response` provided as an argument 
     /// if there was no error, otherwise returns the error.
     fn handle_response(
-        &mut self, response : Response, region : Region, service : Service, method_id : u32) -> Result<Response> {
+        &mut self, response : Response, region : Region, service : Service, method : u32) -> Result<Response> {
         
         // do any extra work or update internal state first
         match response.status() {
-            StatusCode::OK => self.cache_rate_limits(&response, region, service, method_id)?,
+            StatusCode::OK => self.cache_rate_limits(&response, region, service, method)?,
             _ => { }
         }
 
         //now that internal state is updated, make a state transition for endpoints
-        self.handle_status_transitions(response.status(), region, service, method_id);
+        self.handle_status_transitions(response.status(), region, service, method);
 
         // convert to error if required
         match response.error_for_status() {
-            Err(e) => { println!("{:?}", self.endpoints.get(&region_id_to_endpoint_id(region))); Err(Error::from(e)) },
+            Err(e) => { println!("{:?}", self.endpoints.get(&region_id(region))); Err(Error::from(e)) },
             Ok(r) => Ok(r),
         }
     }
@@ -196,20 +129,20 @@ impl Context {
     /// `status_code` : the status code the server responded with
     /// `region` : the region endpoint identifier
     /// `service` : the service endpoint identifier
-    /// `method_id` : the method identifier as a u32 for the service
+    /// `method` : the method identifier as a u32 for the service
     fn handle_status_transitions(&mut self, 
-        status_code : StatusCode, region : Region, service : Service, method_id : u32){
+        status_code : StatusCode, region : Region, service : Service, method : u32){
 
         {
-            let region_ep  = self.endpoints.get_mut(&region_id_to_endpoint_id(region)).unwrap();
+            let region_ep  = self.endpoints.get_mut(&region_id(region)).unwrap();
             region_ep.update_status_from_response_code(status_code);
         }
         {
-            let service_ep = self.endpoints.get_mut(&service_id_to_endpoint_id(service)).unwrap();
+            let service_ep = self.endpoints.get_mut(&service_id(region, service)).unwrap();
             service_ep.update_status_from_response_code(status_code);
         }
         {
-            let method_ep  = self.endpoints.get_mut(&method_id_to_endpoint_id(service, method_id)).unwrap();
+            let method_ep  = self.endpoints.get_mut(&method_id(service, method)).unwrap();
             method_ep.update_status_from_response_code(status_code);
         }
     }
@@ -221,14 +154,14 @@ impl Context {
     /// * `response` - a reference to the response given by the lol server (response code must be 200 - ok)
     /// * `region` - the queried region
     /// * `service` - the queried service
-    /// * `method_id` - the queried method
+    /// * `method` - the queried method
     /// 
     /// # Remarks
     /// 
     /// This is used only after receiving a 200 OK and should not be used elsewhere, for it
     /// will panic. This is separately in its own function primarily for convenience/readability.
     fn cache_rate_limits(
-        &mut self, response : &Response, region : Region, service : Service, method_id : u32) -> Result<()> {
+        &mut self, response : &Response, region : Region, service : Service, method : u32) -> Result<()> {
 
         let date_str = response.headers().get("Date").unwrap().to_str().unwrap();
         let timestamp_ms = DateTime::parse_from_rfc2822(date_str).unwrap().timestamp_millis();
@@ -236,7 +169,7 @@ impl Context {
 
         // cache app limits if more recent
         {
-            let region_ep  = self.endpoints.get_mut(&region_id_to_endpoint_id(region)).unwrap();
+            let region_ep  = self.endpoints.get_mut(&region_id(region)).unwrap();
             if timestamp_ms >= region_ep.last_update_timestamp_ms() {
 
                 let limits = Self::get_header_as_rate_limit(&response, "X-App-Rate-Limit")?;
@@ -248,7 +181,7 @@ impl Context {
 
         // cache method limits if more recent
         {
-            let method_ep  = self.endpoints.get_mut(&method_id_to_endpoint_id(service, method_id)).unwrap();
+            let method_ep  = self.endpoints.get_mut(&method_id(service, method)).unwrap();
             if timestamp_ms >= method_ep.last_update_timestamp_ms() {
 
                 let limits = Self::get_header_as_rate_limit(&response, "X-Method-Rate-Limit")?;
@@ -320,18 +253,18 @@ impl Context {
     /// 
     /// `region` : the region endpoint identifier
     /// `service` : the service endpoint identifier
-    /// `method_id` : the method identifier as a u32 for the service
+    /// `method` : the method identifier as a u32 for the service
     /// 
     /// # Return
     /// 
     /// Gives a `Result` containin `()` on success, and
     /// an error on failure.
     fn prepare_to_query(
-        &mut self, region : Region, service : Service, method_id : u32) -> Result<()>{
+        &mut self, region : Region, service : Service, method : u32) -> Result<()>{
 
         // update + check region
         {
-            let region_ep  = self.endpoints.entry(region_id_to_endpoint_id(region))
+            let region_ep  = self.endpoints.entry(region_id(region))
                 .or_insert(Endpoint::new());
             region_ep.update_status_pre_query();
             if region_ep.can_query() == false { return Err(Error::from(ErrorKind::from(region_ep.status()))); }
@@ -339,7 +272,7 @@ impl Context {
 
         // update + check service
         {
-            let service_ep  = self.endpoints.entry(service_id_to_endpoint_id(service))
+            let service_ep  = self.endpoints.entry(service_id(region, service))
                 .or_insert(Endpoint::new());
             service_ep.update_status_pre_query();
             if service_ep.can_query() == false { return Err(Error::from(ErrorKind::from(service_ep.status()))); }
@@ -347,7 +280,7 @@ impl Context {
 
         // update + check method
         {
-            let method_ep  = self.endpoints.entry(method_id_to_endpoint_id(service, method_id))
+            let method_ep  = self.endpoints.entry(method_id(service, method))
                 .or_insert(Endpoint::new());
             method_ep.update_status_pre_query();
             if method_ep.can_query() == false { return Err(Error::from(ErrorKind::from(method_ep.status()))); }
