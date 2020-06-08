@@ -98,9 +98,7 @@ impl Context {
     /// # Arguments
     /// 
     /// `response` : the server response
-    /// `region` : the region endpoint identifier
-    /// `service` : the service endpoint identifier
-    /// `method` : the method identifier as a u32 for the service
+    /// `endpoint_ids` : the identifiers for the affected endpoints
     /// 
     /// # Return
     /// 
@@ -133,9 +131,7 @@ impl Context {
     /// # Arguments
     /// 
     /// `status_code` : the status code the server responded with
-    /// `region` : the region endpoint identifier
-    /// `service` : the service endpoint identifier
-    /// `method` : the method identifier as a u32 for the service
+    /// `endpoint_ids` : the identifiers for the affected endpoints
     fn handle_status_transitions(&mut self, 
         status_code : StatusCode, endpoint_ids : &[Id]){
 
@@ -155,9 +151,7 @@ impl Context {
     /// 
     /// * `response` - a reference to the response 
     ///     given by the lol server (response code must be 200 - ok)
-    /// * `region` - the queried region
-    /// * `service` - the queried service
-    /// * `method` - the queried method
+    /// `endpoint_ids` : the identifiers for the affected endpoints
     /// 
     /// # Remarks
     /// 
@@ -205,7 +199,7 @@ impl Context {
     /// # Arguments
     /// 
     /// `response` : the `Response` object we received
-    /// `header_naem` : the name of the header to pull
+    /// `header_name` : the name of the header to pull
     /// 
     /// # Return
     /// 
@@ -226,7 +220,7 @@ impl Context {
     /// # Arguments
     /// 
     /// `response` : the `Response` object we received
-    /// `header_naem` : the name of the header to pull
+    /// `header_name` : the name of the header to pull
     /// 
     /// # Return
     /// 
@@ -256,9 +250,7 @@ impl Context {
     /// 
     /// # Arguments
     /// 
-    /// `region` : the region endpoint identifier
-    /// `service` : the service endpoint identifier
-    /// `method` : the method identifier as a u32 for the service
+    /// `endpoint_ids` : the identifiers for the affected endpoints
     /// 
     /// # Return
     /// 
