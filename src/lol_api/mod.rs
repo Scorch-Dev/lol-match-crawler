@@ -10,7 +10,7 @@
 
 // external uses
 use chrono::DateTime;
-use reqwest::blocking::{Client, Response};
+use reqwest::{Client, Response};
 use reqwest::StatusCode;
 use std::collections::HashMap;
 
@@ -50,27 +50,27 @@ impl Context {
     }
 
     /** SUMMONER V4 METHODS */
-    pub fn query_summoner_v4_by_summoner_name(
+    pub async fn query_summoner_v4_by_summoner_name(
         &mut self, region : Region, summoner_name : &str)->Result<summoner_v4::SummonerDto>{
 
         let uri = Self::region_uri(region) + &summoner_v4::by_name_uri(summoner_name);
         let endpoint_ids = [Id::from_region(region), 
                             Id::from_service(region, Service::SummonerV4), 
                             Id::from_method(Service::SummonerV4, summoner_v4::Method::ByName as u32)];
-        let response = self.send_query(&uri, &endpoint_ids)?;
-        let data = response.json::<summoner_v4::SummonerDto>()?;
+        let response = self.send_query(&uri, &endpoint_ids).await?;
+        let data = response.json::<summoner_v4::SummonerDto>().await?;
         Ok(data)
     }
 
-    pub fn query_summoner_v4_by_account(
+    pub async fn query_summoner_v4_by_account(
         &mut self, region : Region, encrypted_account_id : &str)->Result<summoner_v4::SummonerDto> {
 
         let uri = Self::region_uri(region) + &summoner_v4::by_account_uri(encrypted_account_id);
         let endpoint_ids = [Id::from_region(region), 
                             Id::from_service(region, Service::SummonerV4), 
                             Id::from_method(Service::SummonerV4, summoner_v4::Method::ByAccount as u32)];
-        let response = self.send_query(&uri, &endpoint_ids)?;
-        let data = response.json::<summoner_v4::SummonerDto>()?;
+        let response = self.send_query(&uri, &endpoint_ids).await?;
+        let data = response.json::<summoner_v4::SummonerDto>().await?;
         Ok(data)
     }
 
@@ -81,12 +81,12 @@ impl Context {
     /// anything but 200 - OK we return the error.
     /// 
     /// # Arguments
-    fn send_query(&mut self, uri : &str, endpoint_ids : &[Id])->Result<Response> {
+    async fn send_query(&mut self, uri : &str, endpoint_ids : &[Id])->Result<Response> {
 
         self.prepare_to_query(&endpoint_ids)?;
         let response = self.client.get(uri)
             .header("X-Riot-Token", &self.api_key)
-            .send()?;
+            .send().await?;
         self.handle_response(response, endpoint_ids)
     }
 
