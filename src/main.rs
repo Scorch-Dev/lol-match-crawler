@@ -19,17 +19,21 @@ async fn do_main() -> lol_api::Result<()> {
 
     // launch environment using api key
     let args : Vec<String> = env::args().collect();
-    let mut ctx;
+    let ctx;
 
     match args.get(1) {
         Some(key) => ctx = lol_api::Context::new(&key),
         None => { usage(); return Err(lol_api::Error::from("missing command line argument.".to_string())) }
     }
 
+    let account_id = ctx.query_summoner_v4_by_summoner_name(lol_api::Region::Na1, "hi").await?.account_id;
     for _ in 0..90 {
-        let dto = ctx.query_summoner_v4_by_summoner_name(lol_api::Region::Na1, "hi").await?;
-        let dto_two = ctx.query_summoner_v4_by_account(lol_api::Region::Na1, &dto.account_id).await?;
-        assert_eq!(dto.account_id, dto_two.account_id);
+
+        let dtos = tokio::join!(
+            ctx.query_summoner_v4_by_summoner_name(lol_api::Region::Na1, "hi"),
+            ctx.query_summoner_v4_by_account(lol_api::Region::Na1, &account_id));
+
+        assert_eq!(dtos.0?.account_id, dtos.1?.account_id);
     }
 
     Ok(())

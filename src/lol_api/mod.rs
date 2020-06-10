@@ -10,6 +10,7 @@
 
 // external uses
 use chrono::DateTime;
+use core::cell::RefCell;
 use reqwest::{Client, Response};
 use reqwest::StatusCode;
 use std::collections::HashMap;
@@ -32,7 +33,7 @@ use endpoint::{Endpoint, Id};
 /// of rate limits and such.
 #[derive(Debug)]
 pub struct Context {
-    endpoints : HashMap<Id, Endpoint>,
+    endpoints : RefCell<HashMap<Id, Endpoint>>,
     api_key : String,
     client : Client
 }
@@ -43,7 +44,7 @@ impl Context {
     /// 
     pub fn new(api_key : &str) -> Context {
         Context{
-            endpoints : HashMap::new(),
+            endpoints : RefCell::new(HashMap::new()),
             api_key : api_key.to_string(),
             client : Client::new(),
         }
@@ -51,7 +52,7 @@ impl Context {
 
     /** SUMMONER V4 METHODS */
     pub async fn query_summoner_v4_by_summoner_name(
-        &mut self, region : Region, summoner_name : &str)->Result<summoner_v4::SummonerDto>{
+        &self, region : Region, summoner_name : &str)->Result<summoner_v4::SummonerDto>{
 
         let uri = Self::region_uri(region) + &summoner_v4::by_name_uri(summoner_name);
         let endpoint_ids = [Id::from_region(region), 
@@ -63,7 +64,7 @@ impl Context {
     }
 
     pub async fn query_summoner_v4_by_account(
-        &mut self, region : Region, encrypted_account_id : &str)->Result<summoner_v4::SummonerDto> {
+        &self, region : Region, encrypted_account_id : &str)->Result<summoner_v4::SummonerDto> {
 
         let uri = Self::region_uri(region) + &summoner_v4::by_account_uri(encrypted_account_id);
         let endpoint_ids = [Id::from_region(region), 
@@ -81,7 +82,7 @@ impl Context {
     /// anything but 200 - OK we return the error.
     /// 
     /// # Arguments
-    async fn send_query(&mut self, uri : &str, endpoint_ids : &[Id])->Result<Response> {
+    async fn send_query(&self, uri : &str, endpoint_ids : &[Id])->Result<Response> {
 
         self.prepare_to_query(&endpoint_ids)?;
         let response = self.client.get(uri)
@@ -105,7 +106,7 @@ impl Context {
     /// A `Result`, which is the `Response` provided as an argument 
     /// if there was no error, otherwise returns the error.
     fn handle_response(
-        &mut self, response : Response, endpoint_ids : &[Id]) -> Result<Response> {
+        &self, response : Response, endpoint_ids : &[Id]) -> Result<Response> {
         
         // do any extra work or update internal state first
         match response.status() {
@@ -132,11 +133,13 @@ impl Context {
     /// 
     /// `status_code` : the status code the server responded with
     /// `endpoint_ids` : the identifiers for the affected endpoints
-    fn handle_status_transitions(&mut self, 
+    fn handle_status_transitions(&self, 
         status_code : StatusCode, endpoint_ids : &[Id]){
 
+        let endpoints_ref = &mut self.endpoints.borrow_mut();
+
         for id in endpoint_ids {
-            let ep  = self.endpoints.get_mut(id).unwrap();
+            let ep  = endpoints_ref.get_mut(id).unwrap();
             ep.update_status_from_response_code(status_code);
         }
     }
@@ -158,7 +161,9 @@ impl Context {
     /// This is used only after receiving a 200 OK and should not be used elsewhere, for it
     /// will panic. This is separately in its own function primarily for convenience/readability.
     fn cache_rate_limits(
-        &mut self, response : &Response, endpoint_ids : &[Id]) -> Result<()> {
+        &self, response : &Response, endpoint_ids : &[Id]) -> Result<()> {
+
+        let endpoints_ref = &mut self.endpoints.borrow_mut();
 
         let date_str = response.headers().get("Date").unwrap().to_str().unwrap();
         let timestamp_ms = DateTime::parse_from_rfc2822(date_str).unwrap().timestamp_millis();
@@ -168,7 +173,7 @@ impl Context {
 
             // use the appropriate header for region endpoint rate limiting
             if id.is_region() {
-                let region_ep  = self.endpoints.get_mut(id).unwrap();
+                let region_ep  = endpoints_ref.get_mut(id).unwrap();
                 if timestamp_ms >= region_ep.last_update_timestamp_ms() {
 
                     let limits = Self::get_header_as_rate_limit(&response, "X-App-Rate-Limit")?;
@@ -179,7 +184,7 @@ impl Context {
             }
             // use the appropriate header for method endpoint rate limiting
             else if id.is_method() {
-                let method_ep  = self.endpoints.get_mut(id).unwrap();
+                let method_ep  = endpoints_ref.get_mut(id).unwrap();
                 if timestamp_ms >= method_ep.last_update_timestamp_ms() {
 
                     let limits = Self::get_header_as_rate_limit(&response, "X-Method-Rate-Limit")?;
@@ -257,13 +262,16 @@ impl Context {
     /// Gives a `Result` containin `()` on success, and
     /// an error on failure.
     fn prepare_to_query(
-        &mut self, endpoint_ids : &[Id]) -> Result<()>{
+        &self, endpoint_ids : &[Id]) -> Result<()>{
 
         // update + check region
         for id in endpoint_ids {
-            let ep  = self.endpoints.entry(*id).or_insert(Endpoint::new());
+            let endpoints_ref = &mut self.endpoints.borrow_mut();
+            let ep  = endpoints_ref.entry(*id).or_insert(Endpoint::new());
             ep.update_status_pre_query();
-            if ep.can_query() == false { return Err(Error::from(ErrorKind::from(ep.status()))); }
+            if ep.can_query() == false { 
+                return Err(Error::from(ErrorKind::from(ep.status()))); 
+            }
         }
 
         Ok(())
