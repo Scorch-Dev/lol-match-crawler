@@ -10,7 +10,7 @@
 
 // external uses
 use chrono::DateTime;
-use core::cell::RefCell;
+use std::sync::Mutex;
 use reqwest::{Client, Response};
 use reqwest::StatusCode;
 use std::collections::HashMap;
@@ -33,7 +33,7 @@ use endpoint::{Endpoint, Id};
 /// of rate limits and such.
 #[derive(Debug)]
 pub struct Context {
-    endpoints : RefCell<HashMap<Id, Endpoint>>,
+    endpoints : Mutex<HashMap<Id, Endpoint>>,  // now the whole struct is sync, hurray!
     api_key : String,
     client : Client
 }
@@ -44,7 +44,7 @@ impl Context {
     /// 
     pub fn new(api_key : &str) -> Context {
         Context{
-            endpoints : RefCell::new(HashMap::new()),
+            endpoints : Mutex::new(HashMap::new()),
             api_key : api_key.to_string(),
             client : Client::new(),
         }
@@ -82,6 +82,20 @@ impl Context {
     /// anything but 200 - OK we return the error.
     /// 
     /// # Arguments
+    /// 
+    /// `uri` - the uri to execute the GET request against
+    /// `endpoint_ids` - identifiers of affected endpoints
+    /// 
+    /// # Remarks
+    /// 
+    /// This is the primary yeild point that could lead to panics in our `endpoints`
+    /// member, which is a `RefCell`. The only thing to watch out for is to make
+    /// sure that we are not holding the lock when we yield out or risk poisoning the mutex on the endpoints.
+    /// 
+    /// # Return
+    /// 
+    /// A result indicating the reqwest::Response 
+    /// if one was received from the server (otherwise an error)
     async fn send_query(&self, uri : &str, endpoint_ids : &[Id])->Result<Response> {
 
         self.prepare_to_query(&endpoint_ids)?;
@@ -136,7 +150,7 @@ impl Context {
     fn handle_status_transitions(&self, 
         status_code : StatusCode, endpoint_ids : &[Id]){
 
-        let endpoints_ref = &mut self.endpoints.borrow_mut();
+        let endpoints_ref = &mut self.endpoints.lock().unwrap();
 
         for id in endpoint_ids {
             let ep  = endpoints_ref.get_mut(id).unwrap();
@@ -163,7 +177,7 @@ impl Context {
     fn cache_rate_limits(
         &self, response : &Response, endpoint_ids : &[Id]) -> Result<()> {
 
-        let endpoints_ref = &mut self.endpoints.borrow_mut();
+        let endpoints_ref = &mut self.endpoints.lock().unwrap();
 
         let date_str = response.headers().get("Date").unwrap().to_str().unwrap();
         let timestamp_ms = DateTime::parse_from_rfc2822(date_str).unwrap().timestamp_millis();
@@ -266,7 +280,7 @@ impl Context {
 
         // update + check region
         for id in endpoint_ids {
-            let endpoints_ref = &mut self.endpoints.borrow_mut();
+            let endpoints_ref = &mut self.endpoints.lock().unwrap();
             let ep  = endpoints_ref.entry(*id).or_insert(Endpoint::new());
             ep.update_status_pre_query();
             if ep.can_query() == false { 
