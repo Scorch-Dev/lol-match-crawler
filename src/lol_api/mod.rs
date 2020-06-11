@@ -51,7 +51,26 @@ impl Context {
     }
 
     /** SUMMONER V4 METHODS */
+    #[allow(dead_code)]
     pub async fn query_summoner_v4_by_summoner_name(
+        &self, region : Region, summoner_name : &str, retry_count : u32)->Result<summoner_v4::SummonerDto> {
+
+        let tries = retry_count + 1;
+        let mut res = Err(Error::from(""));
+
+        for _ in 0..tries {
+            res = self.try_query_summoner_v4_by_summoner_name(region, summoner_name).await;
+            match &res {
+                Ok(_) => break,
+                Err(e) if e.can_retry() => { async_std::task::sleep(e.retry_time().unwrap()).await; },
+                Err(_) => {},
+            }
+        }
+
+        res.chain_err(|| "Retry Count Exceeded")
+    }
+
+    pub async fn try_query_summoner_v4_by_summoner_name(
         &self, region : Region, summoner_name : &str)->Result<summoner_v4::SummonerDto>{
 
         let uri = Self::region_uri(region) + &summoner_v4::by_name_uri(summoner_name);
@@ -63,7 +82,7 @@ impl Context {
         Ok(data)
     }
 
-    pub async fn query_summoner_v4_by_account(
+    pub async fn try_query_summoner_v4_by_account(
         &self, region : Region, encrypted_account_id : &str)->Result<summoner_v4::SummonerDto> {
 
         let uri = Self::region_uri(region) + &summoner_v4::by_account_uri(encrypted_account_id);
@@ -132,9 +151,10 @@ impl Context {
         self.handle_status_transitions(response.status(), endpoint_ids);
 
         // convert to error if required
+        // TODO: find the offending endpoint and get the likely cooldown
         match response.error_for_status() {
-            Err(e) => Err(Error::from(e)),
             Ok(r) => Ok(r),
+            Err(e) => Err(Error::from(e)),
         }
     }
 

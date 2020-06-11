@@ -1,4 +1,5 @@
 
+extern crate async_std;
 extern crate reqwest;
 #[macro_use]
 extern crate error_chain;
@@ -9,6 +10,7 @@ extern crate strum_macros;
 extern crate tokio;
 
 mod lol_api;
+mod crawler;
 use std::env;
 
 fn usage(){
@@ -26,12 +28,12 @@ async fn do_main() -> lol_api::Result<()> {
         None => { usage(); return Err(lol_api::Error::from("missing command line argument.".to_string())) }
     }
 
-    let account_id = ctx.query_summoner_v4_by_summoner_name(lol_api::Region::Na1, "hi").await?.account_id;
+    let account_id = ctx.try_query_summoner_v4_by_summoner_name(lol_api::Region::Na1, "hi").await?.account_id;
     for _ in 0..90 {
 
         let dtos = tokio::join!(
-            ctx.query_summoner_v4_by_summoner_name(lol_api::Region::Na1, "hi"),
-            ctx.query_summoner_v4_by_account(lol_api::Region::Na1, &account_id));
+            ctx.try_query_summoner_v4_by_summoner_name(lol_api::Region::Na1, "hi"),
+            ctx.try_query_summoner_v4_by_account(lol_api::Region::Na1, &account_id));
 
         assert_eq!(dtos.0?.account_id, dtos.1?.account_id);
     }

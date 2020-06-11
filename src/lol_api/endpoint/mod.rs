@@ -79,11 +79,19 @@ impl CooldownState {
     /// 
     /// True if expired, false otherwise
     pub fn is_expired(&self) -> bool {
-        let since_started = Instant::now().duration_since(self.start);
-        match since_started.checked_sub(self.duration) {
-            Some(_) => true,
-            None => false,
+        if let Some(_) = self.time_left() {
+            false
         }
+        else {
+            true
+        }
+    }
+
+    /// Determines how much time is left
+    /// on the cooldown
+    pub fn time_left(&self) -> Option<Duration> {
+        let since_started = self.start.elapsed();
+        since_started.checked_sub(self.duration)
     }
 }
 
