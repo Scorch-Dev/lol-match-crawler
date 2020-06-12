@@ -1,5 +1,4 @@
 
-extern crate async_std;
 extern crate reqwest;
 #[macro_use]
 extern crate error_chain;
@@ -29,11 +28,11 @@ async fn do_main() -> lol_api::Result<()> {
     }
 
     let account_id = ctx.try_query_summoner_v4_by_summoner_name(lol_api::Region::Na1, "hi").await?.account_id;
-    for _ in 0..90 {
+    for _ in 0..60 {
 
         let dtos = tokio::join!(
-            ctx.try_query_summoner_v4_by_summoner_name(lol_api::Region::Na1, "hi"),
-            ctx.try_query_summoner_v4_by_account(lol_api::Region::Na1, &account_id));
+            ctx.query_summoner_v4_by_summoner_name(lol_api::Region::Na1, "hi", 3),
+            ctx.query_summoner_v4_by_account(lol_api::Region::Na1, &account_id, 3));
 
         assert_eq!(dtos.0?.account_id, dtos.1?.account_id);
     }

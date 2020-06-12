@@ -231,11 +231,6 @@ impl Endpoint {
     /// `status_code` : the reqwest::StatusCode of latest response. 
     pub fn update_status_from_response_code(&mut self, status_code : StatusCode) {
 
-        // we should never be on cooldown after a query, because that means
-        // we allowed a query to go through when the endpoint was on cooldown in the first place
-        // (at least in a syncrhonous setting)
-        assert!(!matches!(self.status, Status::Cooldown(_))); 
-
         match &self.status {
             Status::Normal => self.update_status_from_normal(status_code),
             Status::Unkown => self.update_status_from_unknown(status_code),

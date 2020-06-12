@@ -53,21 +53,10 @@ impl Context {
     /** SUMMONER V4 METHODS */
     #[allow(dead_code)]
     pub async fn query_summoner_v4_by_summoner_name(
-        &self, region : Region, summoner_name : &str, retry_count : u32)->Result<summoner_v4::SummonerDto> {
+        &self, region : Region, summoner_name : &str, retry_count : usize)->Result<summoner_v4::SummonerDto> {
 
-        let tries = retry_count + 1;
-        let mut res = Err(Error::from(""));
-
-        for _ in 0..tries {
-            res = self.try_query_summoner_v4_by_summoner_name(region, summoner_name).await;
-            match &res {
-                Ok(_) => break,
-                Err(e) if e.can_retry() => { async_std::task::sleep(e.retry_time().unwrap()).await; },
-                Err(_) => {},
-            }
-        }
-
-        res.chain_err(|| "Retry Count Exceeded")
+        Self::query_with_retry(retry_count, 
+            &|| { async{ self.try_query_summoner_v4_by_summoner_name(region, summoner_name).await } }).await
     }
 
     pub async fn try_query_summoner_v4_by_summoner_name(
@@ -82,6 +71,14 @@ impl Context {
         Ok(data)
     }
 
+    #[allow(dead_code)]
+    pub async fn query_summoner_v4_by_account(
+        &self, region : Region, encrypted_account_id : &str, retry_count : usize)->Result<summoner_v4::SummonerDto> {
+
+        Self::query_with_retry(retry_count, 
+            &|| { async{ self.try_query_summoner_v4_by_account(region, encrypted_account_id).await } }).await
+    }
+
     pub async fn try_query_summoner_v4_by_account(
         &self, region : Region, encrypted_account_id : &str)->Result<summoner_v4::SummonerDto> {
 
@@ -92,6 +89,28 @@ impl Context {
         let response = self.send_query(&uri, &endpoint_ids).await?;
         let data = response.json::<summoner_v4::SummonerDto>().await?;
         Ok(data)
+    }
+
+    /// A helper which takes an async closure to save on typing for the
+    async fn query_with_retry<T, F>(retry_count : usize, query_func : &dyn Fn() -> F ) -> Result<T> 
+    where F : std::future::Future<Output=Result<T>>{
+
+        let mut res = Err(Error::from(""));
+
+        for i in 0..(retry_count+1) {
+            res = query_func().await;
+            match &res {
+                Ok(_) => break,
+                Err(e) if e.can_retry() && i < retry_count => { 
+                    let sleep_duration = e.retry_time().unwrap();
+                    println!("Sleeping for {} s!", sleep_duration.as_secs()); 
+                    tokio::time::delay_for(tokio::time::Duration::from_secs(sleep_duration.as_secs())).await;
+                },
+                _ => {},
+            }
+        }
+
+        res.chain_err(|| "Retry count exceeded")
     }
 
     /// The workhorse method for synhrnous querying. We check internal state
