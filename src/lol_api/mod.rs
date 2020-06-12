@@ -10,10 +10,10 @@
 
 // external uses
 use chrono::DateTime;
-use std::sync::Mutex;
 use reqwest::{Client, Response};
 use reqwest::StatusCode;
 use std::collections::HashMap;
+use tokio::sync::Mutex;
 
 // my mods/uses
 mod services;
@@ -56,7 +56,7 @@ impl Context {
         &self, region : Region, summoner_name : &str, retry_count : usize)->Result<summoner_v4::SummonerDto> {
 
         Self::query_with_retry(retry_count, 
-            &|| { async{ self.try_query_summoner_v4_by_summoner_name(region, summoner_name).await } }).await
+            &||{ self.try_query_summoner_v4_by_summoner_name(region, summoner_name) } ).await
     }
 
     pub async fn try_query_summoner_v4_by_summoner_name(
@@ -76,7 +76,7 @@ impl Context {
         &self, region : Region, encrypted_account_id : &str, retry_count : usize)->Result<summoner_v4::SummonerDto> {
 
         Self::query_with_retry(retry_count, 
-            &|| { async{ self.try_query_summoner_v4_by_account(region, encrypted_account_id).await } }).await
+            &|| { self.try_query_summoner_v4_by_account(region, encrypted_account_id) }).await
     }
 
     pub async fn try_query_summoner_v4_by_account(
@@ -103,7 +103,6 @@ impl Context {
                 Ok(_) => break,
                 Err(e) if e.can_retry() && i < retry_count => { 
                     let sleep_duration = e.retry_time().unwrap();
-                    println!("Sleeping for {} s!", sleep_duration.as_secs()); 
                     tokio::time::delay_for(tokio::time::Duration::from_secs(sleep_duration.as_secs())).await;
                 },
                 _ => {},
@@ -136,11 +135,11 @@ impl Context {
     /// if one was received from the server (otherwise an error)
     async fn send_query(&self, uri : &str, endpoint_ids : &[Id])->Result<Response> {
 
-        self.prepare_to_query(&endpoint_ids)?;
+        self.prepare_to_query(&endpoint_ids).await?;
         let response = self.client.get(uri)
             .header("X-Riot-Token", &self.api_key)
             .send().await?;
-        self.handle_response(response, endpoint_ids)
+        self.handle_response(response, endpoint_ids).await
     }
 
     /// Call this after the query is sent to handle any internal state
@@ -157,17 +156,17 @@ impl Context {
     /// 
     /// A `Result`, which is the `Response` provided as an argument 
     /// if there was no error, otherwise returns the error.
-    fn handle_response(
+    async fn handle_response(
         &self, response : Response, endpoint_ids : &[Id]) -> Result<Response> {
         
         // do any extra work or update internal state first
         match response.status() {
-            StatusCode::OK => self.cache_rate_limits(&response, endpoint_ids)?,
+            StatusCode::OK => self.cache_rate_limits(&response, endpoint_ids).await?,
             _ => { }
         }
 
         //now that internal state is updated, make a state transition for endpoints
-        self.handle_status_transitions(response.status(), endpoint_ids);
+        self.handle_status_transitions(response.status(), endpoint_ids).await;
 
         // convert to error if required
         // TODO: find the offending endpoint and get the likely cooldown
@@ -186,10 +185,10 @@ impl Context {
     /// 
     /// `status_code` : the status code the server responded with
     /// `endpoint_ids` : the identifiers for the affected endpoints
-    fn handle_status_transitions(&self, 
+    async fn handle_status_transitions(&self, 
         status_code : StatusCode, endpoint_ids : &[Id]){
 
-        let endpoints_ref = &mut self.endpoints.lock().unwrap();
+        let endpoints_ref = &mut self.endpoints.lock().await;
 
         for id in endpoint_ids {
             let ep  = endpoints_ref.get_mut(id).unwrap();
@@ -213,10 +212,10 @@ impl Context {
     /// 
     /// This is used only after receiving a 200 OK and should not be used elsewhere, for it
     /// will panic. This is separately in its own function primarily for convenience/readability.
-    fn cache_rate_limits(
+    async fn cache_rate_limits(
         &self, response : &Response, endpoint_ids : &[Id]) -> Result<()> {
 
-        let endpoints_ref = &mut self.endpoints.lock().unwrap();
+        let endpoints_ref = &mut self.endpoints.lock().await;
 
         let date_str = response.headers().get("Date").unwrap().to_str().unwrap();
         let timestamp_ms = DateTime::parse_from_rfc2822(date_str).unwrap().timestamp_millis();
@@ -314,12 +313,12 @@ impl Context {
     /// 
     /// Gives a `Result` containin `()` on success, and
     /// an error on failure.
-    fn prepare_to_query(
+    async fn prepare_to_query(
         &self, endpoint_ids : &[Id]) -> Result<()>{
 
         // update + check region
         for id in endpoint_ids {
-            let endpoints_ref = &mut self.endpoints.lock().unwrap();
+            let endpoints_ref = &mut self.endpoints.lock().await;
             let ep  = endpoints_ref.entry(*id).or_insert(Endpoint::new());
             ep.update_status_pre_query();
             if ep.can_query() == false { 
