@@ -21,7 +21,7 @@
 
 // external uses
 use std::collections::HashMap;
-use std::time::{Instant, Duration};
+use tokio::time::{Instant, Duration};
 use reqwest::StatusCode;
 
 // my mods

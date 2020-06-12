@@ -32,7 +32,7 @@ impl Error {
         }
     }
 
-    pub fn retry_time(&self) -> Option<std::time::Duration> {
+    pub fn retry_time(&self) -> Option<tokio::time::Duration> {
         match self.kind() {
 
             // endpoint not ready implies we are on cooldown
@@ -54,7 +54,7 @@ impl Error {
             // and do a second retry
             ErrorKind::Reqwest(err) if err.is_status() => {
                 let status = err.status().unwrap();
-                if status == reqwest::StatusCode::TOO_MANY_REQUESTS { Some(std::time::Duration::from_secs(5)) } else { None }
+                if status == reqwest::StatusCode::TOO_MANY_REQUESTS { Some(tokio::time::Duration::from_secs(5)) } else { None }
             },
             _ => None
         }

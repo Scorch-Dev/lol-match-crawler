@@ -102,8 +102,7 @@ impl Context {
             match &res {
                 Ok(_) => break,
                 Err(e) if e.can_retry() && i < retry_count => { 
-                    let sleep_duration = e.retry_time().unwrap();
-                    tokio::time::delay_for(tokio::time::Duration::from_secs(sleep_duration.as_secs())).await;
+                    tokio::time::delay_for(e.retry_time().unwrap()).await;
                 },
                 _ => {},
             }
