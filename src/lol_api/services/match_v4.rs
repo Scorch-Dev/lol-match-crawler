@@ -1,4 +1,8 @@
+use serde::Deserialize;
+use std::collections::HashMap;
 
+#[derive(Deserialize, Debug)]
+#[serde(rename_all="camelCase")]
 pub struct MatchlistDto {
     pub start_index : i32,
     pub total_games : i32,
@@ -6,6 +10,8 @@ pub struct MatchlistDto {
     pub matches : Vec<MatchReferenceDto>
 }
 
+#[derive(Deserialize, Debug)]
+#[serde(rename_all="camelCase")]
 pub struct MatchReferenceDto {
     pub game_id : i64,
     pub role : String,
@@ -17,6 +23,8 @@ pub struct MatchReferenceDto {
     pub timestamp : i64,
 }
 
+#[derive(Deserialize, Debug)]
+#[serde(rename_all="camelCase")]
 pub struct MatchDto {
     pub game_id : i64,
     pub participant_identities : Vec<ParticipantIdentityDto>,
@@ -33,11 +41,15 @@ pub struct MatchDto {
     pub participants : Vec<ParticipantDto>,
 }
 
+#[derive(Deserialize, Debug)]
+#[serde(rename_all="camelCase")]
 pub struct ParticipantIdentityDto {
     pub participant_id : i64,
     pub player : PlayerDto,
 }
 
+#[derive(Deserialize, Debug)]
+#[serde(rename_all="camelCase")]
 pub struct PlayerDto {
     pub profile_icon : i64,
     pub account_id : String,
@@ -49,6 +61,8 @@ pub struct PlayerDto {
     pub platform_id : String,
 }
 
+#[derive(Deserialize, Debug)]
+#[serde(rename_all="camelCase")]
 pub struct TeamStatsDto {
     pub tower_kills : i32,
     pub rift_herald_kills : i32,
@@ -68,15 +82,19 @@ pub struct TeamStatsDto {
     pub win : String,
 }
 
+#[derive(Deserialize, Debug)]
+#[serde(rename_all="camelCase")]
 pub struct TeamBansDto {
     pub champion_id : i32,
     pub pick_turn : i32,
 }
 
+#[derive(Deserialize, Debug)]
+#[serde(rename_all="camelCase")]
 pub struct ParticipantDto {
     pub participant_id : i32,
     pub champion_id : i32,
-    pub runes : List<RuneDto>,
+    pub runes : Vec<RuneDto>,
     pub stats : ParticipantStatsDto,
     pub team_id : i32,
     pub timeline : ParticipantTimelineDto,
@@ -86,12 +104,16 @@ pub struct ParticipantDto {
     pub masteries : Vec<MasteryDto>,
 }
 
+#[derive(Deserialize, Debug)]
+#[serde(rename_all="camelCase")]
 pub struct RuneDto {
     pub rune_id : i32,
     pub rank : i32,
 }
 
-pub sttruct ParticipantStatsDto {
+#[derive(Deserialize, Debug)]
+#[serde(rename_all="camelCase")]
+pub struct ParticipantStatsDto {
     pub item0 : i32,
     pub item2 : i32,
     pub total_units_healed : i32,
@@ -200,6 +222,8 @@ pub sttruct ParticipantStatsDto {
     pub per_sub_style : i32,
 }
 
+#[derive(Deserialize, Debug)]
+#[serde(rename_all="camelCase")]
 pub struct ParticipantTimelineDto {
     pub participant_id : i32,
     pub cs_diff_per_min_deltas : HashMap<String, f64>,
@@ -213,15 +237,23 @@ pub struct ParticipantTimelineDto {
     pub gold_per_min_deltas : HashMap<String, f64>,
 }
 
+#[derive(Deserialize, Debug)]
+#[serde(rename_all="camelCase")]
 pub struct MasteryDto {
     pub rank : i32,
     pub master_id : i32,
 }
 
-pub fn match_v4_matchlist_by_account_uri(encrypted_account_id : &str) -> String {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Method {
+    MatchlistByAccount = 0,
+    MatchById,
+}
+
+pub fn matchlist_by_account_uri(encrypted_account_id : &str) -> String {
     format!("/lol/match/v4/matchlists/by-account/{}", encrypted_account_id)
 }
 
-pub fn match_v4_match_by_id_uri(match_id : i64) -> String{
+pub fn match_by_id_uri(match_id : i64) -> String{
     format!("/lol/match/v4/matches/{}", match_id)
 }

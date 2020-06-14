@@ -23,7 +23,7 @@ mod errors;
 pub use errors::*;
 pub use endpoint::{Region, Service};
 
-use services::summoner_v4;
+use services::{summoner_v4, match_v4};
 use endpoint::{Endpoint, Id};
 
 /// The context we construct to guess the state
@@ -88,6 +88,47 @@ impl Context {
                             Id::from_method(Service::SummonerV4, summoner_v4::Method::ByAccount as u32)];
         let response = self.send_query(&uri, &endpoint_ids).await?;
         let data = response.json::<summoner_v4::SummonerDto>().await?;
+        Ok(data)
+    }
+    
+    /* MATCH V4 METHODS */
+    #[allow(dead_code)]
+    pub async fn query_match_v4_matchlist_by_account(
+        &self, region : Region, encrypted_account_id : &str, retry_count : usize) -> Result<match_v4::MatchlistDto> {
+
+        Self::query_with_retry(retry_count, 
+            &|| { self.try_query_match_v4_matchlist_by_account(region, encrypted_account_id) }).await
+    }
+
+    pub async fn try_query_match_v4_matchlist_by_account(
+        &self, region : Region, encrypted_account_id : &str) -> Result<match_v4::MatchlistDto> {
+        
+        let uri = Self::region_uri(region) + &match_v4::matchlist_by_account_uri(encrypted_account_id);
+        let endpoint_ids = [Id::from_region(region), 
+                            Id::from_service(region, Service::MatchV4), 
+                            Id::from_method(Service::MatchV4, match_v4::Method::MatchlistByAccount as u32)];
+        let response = self.send_query(&uri, &endpoint_ids).await?;
+        let data = response.json::<match_v4::MatchlistDto>().await?;
+        Ok(data)
+    }
+
+    #[allow(dead_code)]
+    pub async fn query_match_v4_match_by_id(
+        &self, region : Region, match_id : i64, retry_count : usize) -> Result<match_v4::MatchDto> {
+
+        Self::query_with_retry(retry_count, 
+            &|| { self.try_query_match_v4_match_by_id(region, match_id) }).await
+    }
+
+    pub async fn try_query_match_v4_match_by_id(
+        &self, region : Region, match_id : i64) -> Result<match_v4::MatchDto> {
+
+        let uri = Self::region_uri(region) + &match_v4::match_by_id_uri(match_id);
+        let endpoint_ids = [Id::from_region(region), 
+                            Id::from_service(region, Service::MatchV4), 
+                            Id::from_method(Service::MatchV4, match_v4::Method::MatchById as u32)];
+        let response = self.send_query(&uri, &endpoint_ids).await?;
+        let data = response.json::<match_v4::MatchDto>().await?;
         Ok(data)
     }
 

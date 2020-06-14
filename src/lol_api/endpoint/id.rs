@@ -32,6 +32,7 @@ pub enum Region {
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, EnumIter, EnumCount)]
 pub enum Service {
     SummonerV4 = 0,
+    MatchV4,
 }
 
 const MAX_METHODS_PER_SERVICE : usize = 128; //need this since each service has its own methods enum
