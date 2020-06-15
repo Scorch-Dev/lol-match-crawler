@@ -23,8 +23,8 @@ pub struct MatchReferenceDto {
     pub timestamp : i64,
 }
 
-#[derive(Deserialize, Debug)]
-#[serde(rename_all="camelCase")]
+#[derive(Deserialize, Debug, Default)]
+#[serde(rename_all="camelCase", default)]
 pub struct MatchDto {
     pub game_id : i64,
     pub participant_identities : Vec<ParticipantIdentityDto>,
@@ -34,24 +34,24 @@ pub struct MatchDto {
     pub teams : Vec<TeamStatsDto>,
     pub platform_id : String,
     pub game_creation : i64,
-    pub season_id : String,
+    pub season_id : i32,
     pub game_version : String,
     pub map_id : i64,
-    pub game_mod : String,
+    pub game_mode : String,
     pub participants : Vec<ParticipantDto>,
 }
 
-#[derive(Deserialize, Debug)]
-#[serde(rename_all="camelCase")]
+#[derive(Deserialize, Debug, Default)]
+#[serde(rename_all="camelCase", default)]
 pub struct ParticipantIdentityDto {
     pub participant_id : i64,
     pub player : PlayerDto,
 }
 
-#[derive(Deserialize, Debug)]
-#[serde(rename_all="camelCase")]
+#[derive(Deserialize, Debug, Default)]
+#[serde(rename_all="camelCase", default)]
 pub struct PlayerDto {
-    pub profile_icon : i64,
+    pub profile_icon : i32,
     pub account_id : String,
     pub match_history_uri : String,
     pub current_account_id : String,
@@ -61,8 +61,8 @@ pub struct PlayerDto {
     pub platform_id : String,
 }
 
-#[derive(Deserialize, Debug)]
-#[serde(rename_all="camelCase")]
+#[derive(Deserialize, Debug, Default)]
+#[serde(rename_all="camelCase", default)]
 pub struct TeamStatsDto {
     pub tower_kills : i32,
     pub rift_herald_kills : i32,
@@ -73,7 +73,7 @@ pub struct TeamStatsDto {
     pub first_dragon : bool,
     pub dominion_victory_score : i32,
     pub dragon_kills : i32,
-    pub baron_kill : i32,
+    pub baron_kills : i32,
     pub first_inhibitor : bool,
     pub first_tower : bool,
     pub vilemaw_kills : i32,
@@ -82,15 +82,15 @@ pub struct TeamStatsDto {
     pub win : String,
 }
 
-#[derive(Deserialize, Debug)]
-#[serde(rename_all="camelCase")]
+#[derive(Deserialize, Debug, Default)]
+#[serde(rename_all="camelCase", default)]
 pub struct TeamBansDto {
     pub champion_id : i32,
     pub pick_turn : i32,
 }
 
-#[derive(Deserialize, Debug)]
-#[serde(rename_all="camelCase")]
+#[derive(Deserialize, Debug, Default)]
+#[serde(rename_all="camelCase", default)]
 pub struct ParticipantDto {
     pub participant_id : i32,
     pub champion_id : i32,
@@ -104,15 +104,15 @@ pub struct ParticipantDto {
     pub masteries : Vec<MasteryDto>,
 }
 
-#[derive(Deserialize, Debug)]
-#[serde(rename_all="camelCase")]
+#[derive(Deserialize, Debug, Default)]
+#[serde(rename_all="camelCase", default)]
 pub struct RuneDto {
     pub rune_id : i32,
     pub rank : i32,
 }
 
-#[derive(Deserialize, Debug)]
-#[serde(rename_all="camelCase")]
+#[derive(Deserialize, Debug, Default)]
+#[serde(rename_all="camelCase", default)]
 pub struct ParticipantStatsDto {
     pub item0 : i32,
     pub item2 : i32,
@@ -143,14 +143,16 @@ pub struct ParticipantStatsDto {
     pub node_capture : i32,
     pub wards_placed : i32,
     pub total_damage_dealt : i64,
-    pub time_c_cing_other : i64,
+    pub time_c_cing_others : i64,
     pub magical_damage_taken : i64,
     pub largest_killing_spree : i32,
     pub total_damage_dealt_to_champions : i64,
+    pub physical_damage_dealt_to_champions : i64,
     pub neutral_minions_killed_team_jungle : i32,
     pub total_minions_killed : i32,
     pub first_inhibitor_assist : bool,
     pub vision_wards_bought_in_game : i32,
+    pub objective_player_score : i32,
     pub kills : i32,
     pub first_tower_assist : bool,
     pub combat_player_score : i32,
@@ -222,8 +224,8 @@ pub struct ParticipantStatsDto {
     pub per_sub_style : i32,
 }
 
-#[derive(Deserialize, Debug)]
-#[serde(rename_all="camelCase")]
+#[derive(Deserialize, Debug, Default)]
+#[serde(rename_all="camelCase", default)]
 pub struct ParticipantTimelineDto {
     pub participant_id : i32,
     pub cs_diff_per_min_deltas : HashMap<String, f64>,
@@ -237,11 +239,11 @@ pub struct ParticipantTimelineDto {
     pub gold_per_min_deltas : HashMap<String, f64>,
 }
 
-#[derive(Deserialize, Debug)]
-#[serde(rename_all="camelCase")]
+#[derive(Deserialize, Debug, Default)]
+#[serde(rename_all="camelCase", default)]
 pub struct MasteryDto {
     pub rank : i32,
-    pub master_id : i32,
+    pub mastery_id : i32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -254,6 +256,6 @@ pub fn matchlist_by_account_uri(encrypted_account_id : &str) -> String {
     format!("/lol/match/v4/matchlists/by-account/{}", encrypted_account_id)
 }
 
-pub fn match_by_id_uri(match_id : i64) -> String{
+pub fn match_by_id_uri(match_id : i64) -> String {
     format!("/lol/match/v4/matches/{}", match_id)
 }

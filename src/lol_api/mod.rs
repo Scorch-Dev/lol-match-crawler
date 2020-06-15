@@ -384,3 +384,48 @@ impl Context {
         format!("https://{:?}.api.riotgames.com", region)
     }
 }
+
+#[cfg(test)]
+mod tests {
+
+    use super::{Context, Region};
+    use tokio::runtime::Runtime;
+
+    fn get_key() -> String {
+        std::fs::read_to_string("./key.txt")
+            .expect("Can't open file <project root>/key.txt. Please put the riot api key in this file.")
+            .trim().to_string()
+    }
+
+    #[test]
+    fn test_query_struct_deserialization() {
+
+        let mut rt = Runtime::new().unwrap();
+        let ctx = Context::new(&get_key());
+
+        rt.block_on(async {
+
+            // this is a real summoner name
+            let summoner_name = "hi";
+
+            // by summoner_name
+            let summoner_dto = ctx.try_query_summoner_v4_by_summoner_name(Region::Na1, summoner_name).await;
+            assert!(summoner_dto.is_ok());
+
+            // account id
+            let account_id = summoner_dto.unwrap().account_id.to_string();
+            let summoner_dto = ctx.try_query_summoner_v4_by_account(Region::Na1, &account_id).await;
+            assert!(summoner_dto.is_ok());
+
+            // matchlist
+            let matchlist_dto = ctx.try_query_match_v4_matchlist_by_account(Region::Na1, &account_id).await;
+            assert!(matchlist_dto.is_ok());
+
+            // one match
+            let match_id = matchlist_dto.unwrap().matches.get(0).expect("No matches returned by matchlist query").game_id;
+            let match_dto = ctx.try_query_match_v4_match_by_id(Region::Na1, match_id).await;
+            assert!(match_dto.is_ok());
+        });
+    }
+
+}
