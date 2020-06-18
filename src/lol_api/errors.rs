@@ -5,6 +5,7 @@ error_chain!{
         Reqwest(::reqwest::Error);
         HeaderToString(::reqwest::header::ToStrError);
         Serde(::serde::de::value::Error);
+        JoinError(::tokio::task::JoinError);
     }
 
     errors {

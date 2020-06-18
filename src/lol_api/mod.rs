@@ -13,6 +13,7 @@ use chrono::DateTime;
 use reqwest::{Client, Response};
 use reqwest::StatusCode;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::Mutex;
 
 // my mods/uses
@@ -32,41 +33,56 @@ use endpoint::{Endpoint, Id};
 /// api in a safer, easier manner while keeping track
 /// of rate limits and such.
 #[derive(Debug)]
-pub struct Context {
+struct ContextInner {
     endpoints : Mutex<HashMap<Id, Endpoint>>,  // now the whole struct is sync, hurray!
     api_key : String,
     client : Client
 }
 
+pub struct Context {
+    inner : Arc<ContextInner>
+}
+
 impl Context {
 
-    /// Constructs a new lol api
-    /// 
     pub fn new(api_key : &str) -> Context {
-        Context{
-            endpoints : Mutex::new(HashMap::new()),
-            api_key : api_key.to_string(),
-            client : Client::new(),
+        Context{ 
+            inner : Arc::new(
+                ContextInner{
+                    endpoints : Mutex::new(HashMap::new()),
+                    api_key : api_key.to_string(),
+                    client : Client::new(),
+                }),
         }
     }
 
     /** SUMMONER V4 METHODS */
     #[allow(dead_code)]
     pub async fn query_summoner_v4_by_summoner_name(
-        &self, region : Region, summoner_name : &str, retry_count : usize)->Result<summoner_v4::SummonerDto> {
+        &self, region : Region, summoner_name : &str, retry_count : usize)->Result<summoner_v4::SummonerDto>{
 
-        Self::query_with_retry(retry_count, 
-            &||{ self.try_query_summoner_v4_by_summoner_name(region, summoner_name) } ).await
+        let inner = self.inner.clone();
+        let name_str = summoner_name.to_string();
+        Self::query_with_retry(retry_count,
+            move || {
+                Self::_try_query_summoner_v4_by_summoner_name(inner.clone(), region, name_str.clone())
+            }).await
     }
 
     pub async fn try_query_summoner_v4_by_summoner_name(
         &self, region : Region, summoner_name : &str)->Result<summoner_v4::SummonerDto>{
+        
+        Self::_try_query_summoner_v4_by_summoner_name(self.inner.clone(), region, summoner_name.to_string()).await
+    }
 
-        let uri = Self::region_uri(region) + &summoner_v4::by_name_uri(summoner_name);
+    async fn _try_query_summoner_v4_by_summoner_name(
+        inner : Arc<ContextInner>, region : Region, summoner_name : String)->Result<summoner_v4::SummonerDto> {
+
+        let uri = Self::region_uri(region) + &summoner_v4::by_name_uri(&summoner_name);
         let endpoint_ids = [Id::from_region(region), 
                             Id::from_service(region, Service::SummonerV4), 
                             Id::from_method(Service::SummonerV4, summoner_v4::Method::ByName as u32)];
-        let response = self.send_query(&uri, &endpoint_ids).await?;
+        let response = Self::send_query(inner.clone(), &uri, &endpoint_ids).await?;
         let data = response.json::<summoner_v4::SummonerDto>().await?;
         Ok(data)
     }
@@ -75,18 +91,28 @@ impl Context {
     pub async fn query_summoner_v4_by_account(
         &self, region : Region, encrypted_account_id : &str, retry_count : usize)->Result<summoner_v4::SummonerDto> {
 
-        Self::query_with_retry(retry_count, 
-            &|| { self.try_query_summoner_v4_by_account(region, encrypted_account_id) }).await
+        let inner = self.inner.clone();
+        let account_id_str = encrypted_account_id.to_string();
+        Self::query_with_retry(retry_count,
+            move || {
+                Self::_try_query_summoner_v4_by_account(inner.clone(), region, account_id_str.clone())
+            }).await
     }
 
     pub async fn try_query_summoner_v4_by_account(
         &self, region : Region, encrypted_account_id : &str)->Result<summoner_v4::SummonerDto> {
 
-        let uri = Self::region_uri(region) + &summoner_v4::by_account_uri(encrypted_account_id);
+        Self::_try_query_summoner_v4_by_account(self.inner.clone(), region, encrypted_account_id.to_string()).await
+    }
+
+    async fn _try_query_summoner_v4_by_account(
+        inner : Arc<ContextInner>, region : Region, encrypted_account_id : String)->Result<summoner_v4::SummonerDto> {
+
+        let uri = Self::region_uri(region) + &summoner_v4::by_account_uri(&encrypted_account_id);
         let endpoint_ids = [Id::from_region(region), 
                             Id::from_service(region, Service::SummonerV4), 
                             Id::from_method(Service::SummonerV4, summoner_v4::Method::ByAccount as u32)];
-        let response = self.send_query(&uri, &endpoint_ids).await?;
+        let response = Self::send_query(inner.clone(), &uri, &endpoint_ids).await?;
         let data = response.json::<summoner_v4::SummonerDto>().await?;
         Ok(data)
     }
@@ -96,18 +122,28 @@ impl Context {
     pub async fn query_match_v4_matchlist_by_account(
         &self, region : Region, encrypted_account_id : &str, retry_count : usize) -> Result<match_v4::MatchlistDto> {
 
-        Self::query_with_retry(retry_count, 
-            &|| { self.try_query_match_v4_matchlist_by_account(region, encrypted_account_id) }).await
+        let inner = self.inner.clone();
+        let account_id_str = encrypted_account_id.to_string();
+        Self::query_with_retry(retry_count,
+            move || {
+                Self::_try_query_match_v4_matchlist_by_account(inner.clone(), region, account_id_str.clone())
+            }).await
     }
 
     pub async fn try_query_match_v4_matchlist_by_account(
         &self, region : Region, encrypted_account_id : &str) -> Result<match_v4::MatchlistDto> {
+
+        Self::_try_query_match_v4_matchlist_by_account(self.inner.clone(), region, encrypted_account_id.to_string()).await
+    }
+
+    async fn _try_query_match_v4_matchlist_by_account(
+        inner : Arc<ContextInner>, region : Region, encrypted_account_id : String) -> Result<match_v4::MatchlistDto> {
         
-        let uri = Self::region_uri(region) + &match_v4::matchlist_by_account_uri(encrypted_account_id);
+        let uri = Self::region_uri(region) + &match_v4::matchlist_by_account_uri(&encrypted_account_id);
         let endpoint_ids = [Id::from_region(region), 
                             Id::from_service(region, Service::MatchV4), 
                             Id::from_method(Service::MatchV4, match_v4::Method::MatchlistByAccount as u32)];
-        let response = self.send_query(&uri, &endpoint_ids).await?;
+        let response = Self::send_query(inner.clone(), &uri, &endpoint_ids).await?;
         let data = response.json::<match_v4::MatchlistDto>().await?;
         Ok(data)
     }
@@ -116,37 +152,48 @@ impl Context {
     pub async fn query_match_v4_match_by_id(
         &self, region : Region, match_id : i64, retry_count : usize) -> Result<match_v4::MatchDto> {
 
-        Self::query_with_retry(retry_count, 
-            &|| { self.try_query_match_v4_match_by_id(region, match_id) }).await
+        let inner = self.inner.clone();
+        Self::query_with_retry(retry_count,
+            move || {
+                Self::_try_query_match_v4_match_by_id(inner.clone(), region, match_id)
+            }).await
+
     }
 
     pub async fn try_query_match_v4_match_by_id(
         &self, region : Region, match_id : i64) -> Result<match_v4::MatchDto> {
+        
+        Self::_try_query_match_v4_match_by_id(self.inner.clone(), region, match_id).await
+    }
+
+    async fn _try_query_match_v4_match_by_id(
+        inner : Arc<ContextInner>, region : Region, match_id : i64) -> Result<match_v4::MatchDto> {
 
         let uri = Self::region_uri(region) + &match_v4::match_by_id_uri(match_id);
         let endpoint_ids = [Id::from_region(region), 
                             Id::from_service(region, Service::MatchV4), 
                             Id::from_method(Service::MatchV4, match_v4::Method::MatchById as u32)];
-        let response = self.send_query(&uri, &endpoint_ids).await?;
+        let response = Self::send_query(inner.clone(), &uri, &endpoint_ids).await?;
         let data = response.json::<match_v4::MatchDto>().await?;
         Ok(data)
     }
 
     /// A helper which takes an async closure to save on typing for the
-    async fn query_with_retry<T, F>(retry_count : usize, query_func : &dyn Fn() -> F ) -> Result<T> 
-    where F : std::future::Future<Output=Result<T>>{
+    async fn query_with_retry<T, F>(retry_count : usize, query_func : impl Fn() -> F ) -> Result<T> 
+    where F : std::future::Future<Output=Result<T>> + Send {
 
-        let mut res = Err(Error::from(""));
+        let mut res = query_func().await;
 
-        for i in 0..(retry_count+1) {
-            res = query_func().await;
-            match &res {
-                Ok(_) => break,
-                Err(e) if e.can_retry() && i < retry_count => { 
-                    tokio::time::delay_for(e.retry_time().unwrap()).await;
+        for i in 0..retry_count {
+            match res {
+                Ok(_) => return res,
+                Err(e) if e.can_retry() => {
+                    let retry_time = e.retry_time().unwrap().clone(); // clone the time so the future is Send
+                    tokio::time::delay_for(retry_time).await
                 },
-                _ => {},
+                _  => {}
             }
+            res = query_func().await;
         }
 
         res.chain_err(|| "Retry count exceeded")
@@ -173,13 +220,13 @@ impl Context {
     /// 
     /// A result indicating the reqwest::Response 
     /// if one was received from the server (otherwise an error)
-    async fn send_query(&self, uri : &str, endpoint_ids : &[Id])->Result<Response> {
+    async fn send_query(inner : Arc<ContextInner>, uri : &str, endpoint_ids : &[Id])->Result<Response> {
 
-        self.prepare_to_query(&endpoint_ids).await?;
-        let response = self.client.get(uri)
-            .header("X-Riot-Token", &self.api_key)
+        Self::prepare_to_query(inner.clone(), &endpoint_ids).await?;
+        let response = inner.client.get(uri)
+            .header("X-Riot-Token", &inner.api_key)
             .send().await?;
-        self.handle_response(response, endpoint_ids).await
+        Self::handle_response(inner.clone(), response, endpoint_ids).await
     }
 
     /// Call this after the query is sent to handle any internal state
@@ -197,16 +244,16 @@ impl Context {
     /// A `Result`, which is the `Response` provided as an argument 
     /// if there was no error, otherwise returns the error.
     async fn handle_response(
-        &self, response : Response, endpoint_ids : &[Id]) -> Result<Response> {
+        inner : Arc<ContextInner>, response : Response, endpoint_ids : &[Id]) -> Result<Response> {
         
         // do any extra work or update internal state first
         match response.status() {
-            StatusCode::OK => self.cache_rate_limits(&response, endpoint_ids).await?,
+            StatusCode::OK => Self::cache_rate_limits(inner.clone(), &response, endpoint_ids).await?,
             _ => { }
         }
 
         //now that internal state is updated, make a state transition for endpoints
-        self.handle_status_transitions(response.status(), endpoint_ids).await;
+        Self::handle_status_transitions(inner.clone(), response.status(), endpoint_ids).await;
 
         // convert to error if required
         // TODO: find the offending endpoint and get the likely cooldown
@@ -225,10 +272,10 @@ impl Context {
     /// 
     /// `status_code` : the status code the server responded with
     /// `endpoint_ids` : the identifiers for the affected endpoints
-    async fn handle_status_transitions(&self, 
-        status_code : StatusCode, endpoint_ids : &[Id]){
+    async fn handle_status_transitions(
+        inner : Arc<ContextInner>, status_code : StatusCode, endpoint_ids : &[Id]){
 
-        let endpoints_ref = &mut self.endpoints.lock().await;
+        let endpoints_ref = &mut inner.endpoints.lock().await;
 
         for id in endpoint_ids {
             let ep  = endpoints_ref.get_mut(id).unwrap();
@@ -253,9 +300,9 @@ impl Context {
     /// This is used only after receiving a 200 OK and should not be used elsewhere, for it
     /// will panic. This is separately in its own function primarily for convenience/readability.
     async fn cache_rate_limits(
-        &self, response : &Response, endpoint_ids : &[Id]) -> Result<()> {
+        inner : Arc<ContextInner>, response : &Response, endpoint_ids : &[Id]) -> Result<()> {
 
-        let endpoints_ref = &mut self.endpoints.lock().await;
+        let endpoints_ref = &mut inner.endpoints.lock().await;
 
         let date_str = response.headers().get("Date").unwrap().to_str().unwrap();
         let timestamp_ms = DateTime::parse_from_rfc2822(date_str).unwrap().timestamp_millis();
@@ -354,11 +401,11 @@ impl Context {
     /// Gives a `Result` containin `()` on success, and
     /// an error on failure.
     async fn prepare_to_query(
-        &self, endpoint_ids : &[Id]) -> Result<()>{
+        inner : Arc<ContextInner>, endpoint_ids : &[Id]) -> Result<()>{
 
         // update + check region
         for id in endpoint_ids {
-            let endpoints_ref = &mut self.endpoints.lock().await;
+            let endpoints_ref = &mut inner.endpoints.lock().await;
             let ep  = endpoints_ref.entry(*id).or_insert(Endpoint::new());
             ep.update_status_pre_query();
             if ep.can_query() == false { 
