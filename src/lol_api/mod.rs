@@ -23,6 +23,8 @@ mod errors;
 
 pub use errors::*;
 pub use endpoint::{Region, Service};
+pub use services::summoner_v4::SummonerDto;
+pub use services::match_v4::{MatchDto, MatchlistDto, MatchReferenceDto, PlayerDto, ParticipantIdentityDto, ParticipantStatsDto, ParticipantTimelineDto};
 
 use services::{summoner_v4, match_v4};
 use endpoint::{Endpoint, Id};
