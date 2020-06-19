@@ -99,6 +99,7 @@ impl Context {
             }).await
     }
 
+    #[allow(dead_code)]
     pub async fn try_query_summoner_v4_by_account(
         &self, region : Region, encrypted_account_id : &str)->Result<summoner_v4::SummonerDto> {
 
