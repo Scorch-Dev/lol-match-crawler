@@ -9,7 +9,7 @@
 //! checking.
 
 // external uses
-use chrono::DateTime;
+use chrono::{DateTime, Utc};
 use reqwest::{Client, Response};
 use reqwest::StatusCode;
 use std::collections::HashMap;
@@ -308,7 +308,7 @@ impl Context {
         let endpoints_ref = &mut inner.endpoints.lock().await;
 
         let date_str = response.headers().get("Date").unwrap().to_str().unwrap();
-        let timestamp_ms = DateTime::parse_from_rfc2822(date_str).unwrap().timestamp_millis();
+        let response_dt : DateTime<Utc> = DateTime::from(DateTime::parse_from_rfc2822(date_str).unwrap());
 
         // cache app limits if more recent
         for id in endpoint_ids {
@@ -316,23 +316,23 @@ impl Context {
             // use the appropriate header for region endpoint rate limiting
             if id.is_region() {
                 let region_ep  = endpoints_ref.get_mut(id).unwrap();
-                if timestamp_ms >= region_ep.last_update_timestamp_ms() {
+                if (response_dt - region_ep.last_update_time()) > chrono::Duration::zero() {
 
                     let limits = Self::get_header_as_rate_limit(&response, "X-App-Rate-Limit")?;
                     let counts = Self::get_header_as_rate_limit(&response, "X-App-Rate-Limit-Count")?;
 
-                    region_ep.update_buckets(&limits, &counts, timestamp_ms);
+                    region_ep.update_buckets(&limits, &counts, DateTime::from(response_dt));
                 }
             }
             // use the appropriate header for method endpoint rate limiting
             else if id.is_method() {
                 let method_ep  = endpoints_ref.get_mut(id).unwrap();
-                if timestamp_ms >= method_ep.last_update_timestamp_ms() {
+                if (response_dt - method_ep.last_update_time()) > chrono::Duration::zero() {
 
                     let limits = Self::get_header_as_rate_limit(&response, "X-Method-Rate-Limit")?;
                     let counts = Self::get_header_as_rate_limit(&response, "X-Method-Rate-Limit-Count")?;
 
-                    method_ep.update_buckets(&limits, &counts, timestamp_ms);
+                    method_ep.update_buckets(&limits, &counts, DateTime::from(response_dt));
                 }
             }
         }

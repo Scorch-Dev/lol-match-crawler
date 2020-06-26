@@ -20,6 +20,7 @@
 //! 
 
 // external uses
+use chrono::{DateTime,Utc};
 use std::collections::HashMap;
 use tokio::time::{Instant, Duration};
 use reqwest::StatusCode;
@@ -107,9 +108,9 @@ impl CooldownState {
 /// window began.
 #[derive(Debug)]
 struct RateLimitBucket {
-    count : u64,           // count so far
-    max_count : u64,       // max before rate limiting
-    start_timestamp : i64, // estimate of the start time based on last rollover in ms
+    count : u64,                   // count so far
+    max_count : u64,               // max before rate limiting
+    start_time : DateTime<Utc>, // estimate of the start time based on last rollover in ms
 }
 
 /// A single endpoint encapsulates our best guess
@@ -135,7 +136,7 @@ struct RateLimitBucket {
 pub struct Endpoint {
     status : Status,                                    // deduced status of the endpoint
     rate_limit_buckets : HashMap<u64, RateLimitBucket>, // map bucket duration to limit
-    last_update_timestamp_ms : i64,
+    last_update_time : DateTime<Utc>,
 }
 
 impl Endpoint {
@@ -156,7 +157,7 @@ impl Endpoint {
         Endpoint {
             status : Status::Unkown,
             rate_limit_buckets : HashMap::new(),
-            last_update_timestamp_ms : 0i64,     // any request coming in will be automatically newer
+            last_update_time : Utc::now(),
         }
     }
 
@@ -177,7 +178,7 @@ impl Endpoint {
     /// `counts` : the pairs of parsed (count:window_length) parsed from a 200 OK header
     /// `timestamp` : the timestamp (e.g. the "Date" header) of the response that generated
     ///               the `limits` and `counts` data. Should be an i64 milliseconds since the UNIX_EPOCH
-    pub fn update_buckets(&mut self, limits : &[(u64,u64)], counts :  &[(u64,u64)], timestamp : i64) {
+    pub fn update_buckets(&mut self, limits : &[(u64,u64)], counts :  &[(u64,u64)], response_time : DateTime<Utc>) {
 
         // first just update rate limits
         self.rate_limit_buckets.clear(); // in the future, only update when required
@@ -187,7 +188,7 @@ impl Endpoint {
                 .or_insert(RateLimitBucket {
                     count : 0,
                     max_count : 0,
-                    start_timestamp : chrono::Utc::now().timestamp_millis(),
+                    start_time : Utc::now(),
                 });
             bucket.max_count = limit;
         }
@@ -197,12 +198,12 @@ impl Endpoint {
 
             let bucket = self.rate_limit_buckets.get_mut(&bucket_size).unwrap();
             if bucket.count > count { //detect rollover
-                bucket.start_timestamp = timestamp;
+                bucket.start_time = response_time;
             }
             bucket.count = count;
         }
 
-        self.last_update_timestamp_ms = timestamp;
+        self.last_update_time = response_time;
     }
 
     /// Updates endpoint status prior to sending a query.
@@ -270,8 +271,8 @@ impl Endpoint {
     /// 
     /// The timestamp of the last bucket update as an i64 
     /// milliseconds since the UNIX_EPOCH
-    pub fn last_update_timestamp_ms(&self) -> i64{
-        self.last_update_timestamp_ms.clone()
+    pub fn last_update_time(&self) -> DateTime<Utc>{
+        self.last_update_time.clone()
     }
 
     /// The state transition function given that we're in the Normal state
@@ -347,6 +348,7 @@ impl Endpoint {
     fn should_cooldown(&self) -> Option<CooldownState> {
         for (bucket_size, bucket) in self.rate_limit_buckets.iter() {
             if bucket.count == bucket.max_count {
+                //let approx_cd_time = Utc::now().checked_sub_signed(bucket.start_timestamp);
                 return Some(CooldownState::new(Duration::from_secs(*bucket_size)));
             }
         }
