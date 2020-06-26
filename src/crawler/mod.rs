@@ -32,6 +32,14 @@ impl Crawler {
         })
     }
 
+    // use this one to allow shared state
+    #[allow(dead_code)]
+    fn from_other(other : &Crawler) -> Crawler {
+        Crawler{ 
+            inner : other.inner.clone()
+        }
+    }
+
     #[allow(dead_code)]
     pub async fn start_crawl(&self, seed_summoner_name : &str, num_steps : usize) -> Result<()> {
 
@@ -86,6 +94,43 @@ impl Crawler {
                 let matchlist_dto = inner.context.query_match_v4_matchlist_by_account(lol_api::Region::Na1, account_id, 3).await?;
                 match_id = Self::reserve_new_match_id(inner.clone(), &matchlist_dto).await.unwrap();
             }
+        }
+
+        Ok(())
+    }
+
+    fn write_match_to_file(file : &File, match_dto : &lol_api::MatchDto) -> Result<()> {
+
+        let mut line_items : Vec<String> = Vec::new();
+
+        //participant stats
+        for participant in &match_dto.participants {
+
+            // champ
+            line_items.push(participant.champion_id.to_string());
+
+            //spells
+            line_items.push(participant.spell1_id.to_string());
+            line_items.push(participant.spell2_id.to_string());
+
+            //masteries
+            for mastery in &participant.masteries {
+                line_items.push(mastery.mastery_id.to_string());
+                line_items.push(mastery.rank.to_string());
+            }
+
+            //runes
+            for rune in &participant.runes {
+                line_items.push(rune.rune_id.to_string());
+                line_items.push(rune.rank.to_string());
+            }
+
+            // highest achieved season tier
+            line_items.push(participant.highest_achieved_season_tier.clone());
+
+            //role and lane
+            line_items.push(participant.timeline.lane.clone());
+            line_items.push(participant.timeline.role.clone());
         }
 
         Ok(())
