@@ -4,8 +4,9 @@ pub use errors::*;
 
 use crate::lol_api;
 use std::collections::HashSet;
-use std::fs::File;
 use std::sync::Arc;
+use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
 struct CrawlerInner {
@@ -21,8 +22,8 @@ struct Crawler {
 impl Crawler {
 
     #[allow(dead_code)]
-    pub fn new(context : lol_api::Context) -> Result<Crawler> {
-        let file_out = File::create(format!("lol_data-{}", chrono::Utc::now().format("%F-%T")))?;
+    pub async fn new(context : lol_api::Context) -> Result<Crawler> {
+        let file_out = File::create(format!("lol_data-{}", chrono::Utc::now().format("%F-%T"))).await?;
         Ok(Crawler {
             inner : Arc::new(CrawlerInner {
                 context : context,
@@ -99,7 +100,7 @@ impl Crawler {
         Ok(())
     }
 
-    fn write_match_to_file(file : &File, match_dto : &lol_api::MatchDto) -> Result<()> {
+    async fn write_match_to_file(file : &mut File, match_dto : &lol_api::MatchDto) -> Result<()> {
 
         let mut line_items : Vec<String> = Vec::new();
 
@@ -132,6 +133,11 @@ impl Crawler {
             line_items.push(participant.timeline.lane.clone());
             line_items.push(participant.timeline.role.clone());
         }
+
+        // push the line to the output
+        let mut line = line_items.join(",");
+        line.push('\n');
+        file.write_all(&line.into_bytes()).await?;
 
         Ok(())
     }
