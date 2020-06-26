@@ -15,6 +15,7 @@ struct CrawlerInner {
     found_match_ids : Mutex<HashSet<i64>>,
 }
 
+#[derive(Clone)]
 struct Crawler {
     inner : Arc<CrawlerInner>,
 }
@@ -31,14 +32,6 @@ impl Crawler {
                 found_match_ids : Mutex::new(HashSet::new()),
             })
         })
-    }
-
-    // use this one to allow shared state
-    #[allow(dead_code)]
-    fn from_other(other : &Crawler) -> Crawler {
-        Crawler{ 
-            inner : other.inner.clone()
-        }
     }
 
     #[allow(dead_code)]
