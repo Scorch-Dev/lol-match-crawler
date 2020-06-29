@@ -25,12 +25,7 @@ impl From<crate::lol_api::endpoint::Status> for ErrorKind {
 impl Error {
 
     pub fn can_retry(&self) -> bool {
-        if let Some(_) = self.retry_time() {
-            true
-        }
-        else { 
-            false
-        }
+        if self.retry_time().is_some() { true } else { false }
     }
 
     pub fn retry_time(&self) -> Option<tokio::time::Duration> {
@@ -43,7 +38,7 @@ impl Error {
                         Some(duration) => Some(duration),
                         None => None
                     }
-                } else { 
+                } else {
                     None 
                 }
             },
@@ -53,10 +48,10 @@ impl Error {
             // We can retry again certainly at an arbitrary time, though the next will probably
             // just give us a EndpointNotReady, whereby we can adjust our wait time accordingly
             // and do a second retry
-            ErrorKind::Reqwest(err) if err.is_status() => {
-                let status = err.status().unwrap();
-                if status == reqwest::StatusCode::TOO_MANY_REQUESTS { Some(tokio::time::Duration::from_secs(5)) } else { None }
-            },
+            //ErrorKind::Reqwest(err) if err.is_status() => {
+            //    let status = err.status().unwrap();
+            //    if status == reqwest::StatusCode::TOO_MANY_REQUESTS { Some(tokio::time::Duration::from_secs(5)) } else { None }
+            //},
             _ => None
         }
     }

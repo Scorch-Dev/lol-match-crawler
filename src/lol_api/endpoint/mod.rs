@@ -23,9 +23,10 @@
 use chrono::{DateTime,Utc};
 use std::collections::HashMap;
 use tokio::time::{Instant, Duration};
-use reqwest::StatusCode;
+
 
 // my mods
+use crate::lol_api::{Error, ErrorKind, Result};
 mod id;
 pub use id::{Region, Service, Id};
 
@@ -80,19 +81,14 @@ impl CooldownState {
     /// 
     /// True if expired, false otherwise
     pub fn is_expired(&self) -> bool {
-        if let Some(_) = self.time_left() {
-            false
-        }
-        else {
-            true
-        }
+        if self.time_left().is_some() { false } else { true }
     }
 
     /// Determines how much time is left
     /// on the cooldown
     pub fn time_left(&self) -> Option<Duration> {
         let since_started = self.start.elapsed();
-        since_started.checked_sub(self.duration)
+        self.duration.checked_sub(since_started)
     }
 }
 
@@ -211,32 +207,28 @@ impl Endpoint {
     pub fn update_status_pre_query(&mut self) {
         match &self.status {
             Status::Cooldown(cd_state) if cd_state.is_expired() => {
+                println!("Expired!");
                 self.status = Status::JustOffCooldown(cd_state.duration); //just because we expired, doesn't guarentee normal, the cooldown was a guess
             },
             _ => {}
         }
     }
 
-    /// Based on the current state, moves to the next state given the response
-    /// code of a query to the lol api.
-    /// 
-    /// # Remarks
-    /// 
-    /// You must ensure that the response is newer than the last update time
-    /// of this endpoint before calling this (we don't check internally).
-    /// There will be no error as of right now if this occurs, but it will screw
-    /// the internal state machine.
-    /// 
-    /// # Arguments
-    /// 
-    /// `status_code` : the reqwest::StatusCode of latest response. 
-    pub fn update_status_from_response_code(&mut self, status_code : StatusCode) {
+    pub fn update_status_200(&mut self) {
 
         match &self.status {
-            Status::Normal => self.update_status_from_normal(status_code),
-            Status::Unkown => self.update_status_from_unknown(status_code),
-            Status::JustOffCooldown(_) => self.update_status_from_just_off_cooldown(status_code),
+            Status::Normal | Status::Unkown | Status::JustOffCooldown(_) => self.set_status_normal_or_cooldown(),
             _ => {}
+        }
+    }
+
+    pub fn update_status_400(&mut self) {
+        match &self.status {
+            Status::JustOffCooldown(prev_duration) => {
+                let new_cd = prev_duration.checked_mul(2).unwrap();
+                self.status = Status::Cooldown(CooldownState::new(new_cd));
+            },
+            _ => {},
         }
     }
 
@@ -265,6 +257,21 @@ impl Endpoint {
         self.status.clone()
     }
 
+    pub fn error_for_status(&self) -> Result<()> {
+        match &self.status {
+            Status::Cooldown(_) => Err(Error::from(ErrorKind::from(ErrorKind::EndpointNotReady(self.status())))),
+            _ => Ok(()),
+        }
+    }
+
+    pub fn most_likely_cd(&self) -> Option<(u64, Duration)> {
+        self.rate_limit_buckets.iter().map(|(k,v)| (v.max_count - v.count, Duration::from_secs(*k))).min()
+    }
+
+    pub fn force_cd(&mut self, duration : Duration) {
+        self.status = Status::Cooldown(CooldownState::new(duration));
+    }
+
     /// Gets the last time this endpoint had its buckets updated
     /// 
     /// # Return
@@ -273,68 +280,6 @@ impl Endpoint {
     /// milliseconds since the UNIX_EPOCH
     pub fn last_update_time(&self) -> DateTime<Utc>{
         self.last_update_time.clone()
-    }
-
-    /// The state transition function given that we're in the Normal state
-    /// 
-    /// # Arguments
-    /// 
-    /// status_code : The status code of the most recent response
-    /// (see Remarks section of the `update_status_from_response` method).
-    fn update_status_from_normal(&mut self, status_code : StatusCode) {
-
-        assert!(matches!(self.status, Status::Normal));
-
-        match status_code {
-
-            StatusCode::OK => self.set_status_normal_or_cooldown(),
-            StatusCode::TOO_MANY_REQUESTS => {
-            },
-
-            _ => {}
-        }
-    }
-
-    /// The state transition function given that we're in the JustOffCooldown state
-    /// 
-    /// # Arguments
-    /// 
-    /// status_code : The status code of the most recent response
-    /// (see Remarks section of the `update_status_from_response` method).
-    fn update_status_from_just_off_cooldown(&mut self, status_code : StatusCode) {
-
-        assert!(matches!(self.status, Status::JustOffCooldown(_)));
-
-        match status_code{
-
-            // potentially we could come off cooldown only to hit another rate limit on a different bucket
-            StatusCode::OK => self.set_status_normal_or_cooldown(),
-
-            // extend the cooldown and cooldown again
-            StatusCode::TOO_MANY_REQUESTS => {
-                if let Status::JustOffCooldown(prev_duration) = self.status {
-                    self.status = Status::Cooldown(CooldownState::new(prev_duration.checked_mul(2).unwrap()));
-                }
-            },
-
-            _ => {}
-        }
-    }
-
-    /// The state transition function given that we're in the Unkown state
-    /// 
-    /// # Arguments
-    /// 
-    /// status_code : The status code of the most recent response
-    /// (see Remarks section of the `update_status_from_response` method).
-    fn update_status_from_unknown(&mut self, status_code : StatusCode) {
-
-        assert!(matches!(self.status, Status::Unkown));
-
-        match status_code{
-            StatusCode::OK => self.set_status_normal_or_cooldown(),
-            _ => {}
-        }
     }
 
     /// A convenience function that decides whether or not 
@@ -362,6 +307,7 @@ impl Endpoint {
     /// depending on the status of the cached rate limit buckets.
     fn set_status_normal_or_cooldown(&mut self) {
         if let Some(cd_state) = self.should_cooldown() {
+            println!("should cooldown: {:?}", &cd_state);
             self.status = Status::Cooldown(cd_state);
         }
         else {

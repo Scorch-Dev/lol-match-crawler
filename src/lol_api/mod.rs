@@ -192,6 +192,7 @@ impl Context {
                 Ok(_) => return res,
                 Err(e) if e.can_retry() => {
                     let retry_time = e.retry_time().unwrap().clone(); // clone the time so the future is Send
+                    println!("retrying in: {:?}", &retry_time);
                     tokio::time::delay_for(retry_time).await
                 },
                 _  => {}
@@ -206,7 +207,7 @@ impl Context {
     /// make sure the query is safe to execute (e.g. the endpoint isn't on cooldown and we can send),
     /// sends the request, blocks, caches rate-limiting related information,
     /// then returns the server response. If anything happens along the way or the server responds with
-    /// anything but 200 - OK we return the error.
+    /// anything but 200 - OK we return the .
     /// 
     /// # Arguments
     /// 
@@ -256,10 +257,7 @@ impl Context {
         }
 
         //now that internal state is updated, make a state transition for endpoints
-        Self::handle_status_transitions(inner.clone(), response.status(), endpoint_ids).await;
-
-        // convert to error if required
-        // TODO: find the offending endpoint and get the likely cooldown
+        Self::handle_status_transitions(inner.clone(), response.status(), endpoint_ids).await?;
         match response.error_for_status() {
             Ok(r) => Ok(r),
             Err(e) => Err(Error::from(e)),
@@ -276,14 +274,64 @@ impl Context {
     /// `status_code` : the status code the server responded with
     /// `endpoint_ids` : the identifiers for the affected endpoints
     async fn handle_status_transitions(
-        inner : Arc<ContextInner>, status_code : StatusCode, endpoint_ids : &[Id]){
+        inner : Arc<ContextInner>, status_code : StatusCode, endpoint_ids : &[Id]) -> Result<()>{
 
         let endpoints_ref = &mut inner.endpoints.lock().await;
 
-        for id in endpoint_ids {
-            let ep  = endpoints_ref.get_mut(id).unwrap();
-            ep.update_status_from_response_code(status_code);
+        match status_code {
+
+            //update all
+            StatusCode::OK => {
+
+                for id in endpoint_ids {
+                    let ep = endpoints_ref.get_mut(id).unwrap();
+                    ep.update_status_200();
+                }
+            }
+
+            //update all then find likely offending point and set cd
+            StatusCode::TOO_MANY_REQUESTS => {
+                let mut likely_cd : Option<(u64, tokio::time::Duration)> = None; // (bucket, duration)
+                let mut likely_cd_ep_id : Option<Id> = None;
+
+                for id in endpoint_ids {
+
+                    let ep = endpoints_ref.get_mut(id).unwrap();
+                    ep.update_status_400();
+
+                    if let Some((until_cd, cd_dur)) = ep.most_likely_cd() {
+                        if likely_cd.is_none() || until_cd < likely_cd.unwrap().0 {
+                            likely_cd = Some((until_cd,cd_dur));
+                            likely_cd_ep_id = Some(*id);
+                        }
+                    }
+                }
+
+                if let Some(id) = likely_cd_ep_id {
+
+                    let ep = endpoints_ref.get_mut(&id).unwrap();
+                    println!("forcing cooldown {:?}!", likely_cd.unwrap().1);
+                    ep.force_cd(likely_cd.unwrap().1);
+                }
+                // they're all in unkown state? Then cd all of them
+                else {
+                    for id in endpoint_ids {
+                        let ep = endpoints_ref.get_mut(&id).unwrap();
+                        let dur = tokio::time::Duration::from_secs(5);
+                        println!("forcing cooldown {:?}!", &dur);
+                        ep.force_cd(dur);
+                    }
+                }
+            },
+
+            // else do nothing
+            _ => {},
         }
+
+        // now get most likely error
+        endpoint_ids.iter()
+                    .map(|id| endpoints_ref.get(&id).unwrap().error_for_status())
+                    .collect()
     }
 
     /// Uses the response to cache the 
@@ -407,13 +455,12 @@ impl Context {
         inner : Arc<ContextInner>, endpoint_ids : &[Id]) -> Result<()>{
 
         // update + check region
+        let endpoints_ref = &mut inner.endpoints.lock().await;
+
         for id in endpoint_ids {
-            let endpoints_ref = &mut inner.endpoints.lock().await;
             let ep  = endpoints_ref.entry(*id).or_insert(Endpoint::new());
             ep.update_status_pre_query();
-            if ep.can_query() == false { 
-                return Err(Error::from(ErrorKind::from(ep.status()))); 
-            }
+            ep.error_for_status()?;
         }
 
         Ok(())
