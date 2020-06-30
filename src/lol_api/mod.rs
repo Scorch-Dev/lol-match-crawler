@@ -494,6 +494,9 @@ mod tests {
             .trim().to_string()
     }
 
+    /// A test to query each method of each implemented
+    /// service and simply check that the structs received
+    /// from the server deserialize properly
     #[test]
     fn test_query_struct_deserialization() {
 
@@ -525,4 +528,37 @@ mod tests {
         });
     }
 
+    /// Tests the ability for a retried request to backoff when it hits
+    /// a rate limit. For this test, we test the backoff using only a single
+    /// thread and serial requests to hit the rate limit just to ensure basic
+    /// functionality, but not necessarily thread-safety.
+    /// 
+    /// # Remarks
+    /// 
+    /// In this test we attempt to limit the 120 requests per 60s rate-limit
+    /// bucket, but this obviously depends on the current API being limited
+    /// by such a bucket. 
+    /// 
+    /// We `#[ignore]` this test because the backoff is a pain
+    /// in the butt to wait for (120s as stated), so you'll need to run
+    /// the test specifically or with `cargo test -- --ignored` to run this.
+    /// 
+    /// > **TODO**: If the API key has a higher limit, we need to
+    /// > find a way to place where to put this constant
+    /// > and change which bucket we try to hit
+    /// 
+    #[test]
+    #[ignore]
+    fn test_rate_limit_backoff_serial() {
+
+        let mut rt = Runtime::new().unwrap();
+        let ctx = Context::new(&get_key());
+
+        rt.block_on(async {
+            for _ in 0..121 { // rate limit on the 120 bucket
+                let dto = ctx.query_summoner_v4_by_summoner_name(Region::Na1, "hi", 3).await;
+                assert!(dto.is_ok());
+            }
+        });
+    }
 }
