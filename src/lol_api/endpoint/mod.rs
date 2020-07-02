@@ -305,7 +305,13 @@ impl Endpoint {
     /// after a succesful query, the next state option usually could
     /// be either the normal state or the cooldown state
     /// depending on the status of the cached rate limit buckets.
+    /// 
+    // after update, if this was the last in a cd window,
+    // set cooldowns. This will overwrite any existing or temporary
+    // cooldowns set by a 400 status code from a request that
+    // was sent after but returned early
     fn set_status_normal_or_cooldown(&mut self) {
+
         if let Some(cd_state) = self.should_cooldown() {
             println!("should cooldown: {:?}", &cd_state);
             self.status = Status::Cooldown(cd_state);

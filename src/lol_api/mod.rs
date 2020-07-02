@@ -291,37 +291,56 @@ impl Context {
 
             //update all then find likely offending point and set cd
             StatusCode::TOO_MANY_REQUESTS => {
-                let mut likely_cd : Option<(u64, tokio::time::Duration)> = None; // (bucket, duration)
-                let mut likely_cd_ep_id : Option<Id> = None;
 
+                let mut already_cd = false;
                 for id in endpoint_ids {
-
                     let ep = endpoints_ref.get_mut(id).unwrap();
                     ep.update_status_400();
 
-                    if let Some((until_cd, cd_dur)) = ep.most_likely_cd() {
-                        if likely_cd.is_none() || until_cd < likely_cd.unwrap().0 {
-                            likely_cd = Some((until_cd,cd_dur));
-                            likely_cd_ep_id = Some(*id);
+                    if let endpoint::Status::Cooldown(_) = ep.status() {
+                        already_cd = true;
+                    }
+                }
+
+                // if not on cooldown, force a stopgap cooldown to avoid more 400s
+                if !already_cd {
+                    
+                    // grab most likely to cd
+                    let mut likely_cd : Option<(u64, tokio::time::Duration)> = None; // (bucket, duration)
+                    let mut likely_cd_ep_id : Option<Id> = None;
+                    for id in endpoint_ids {
+
+                        let ep = endpoints_ref.get_mut(id).unwrap();
+
+                        if let Some((until_cd, cd_dur)) = ep.most_likely_cd() {
+                            if likely_cd.is_none() || until_cd < likely_cd.unwrap().0 {
+                                likely_cd = Some((until_cd,cd_dur));
+                                likely_cd_ep_id = Some(*id);
+                            }
+                        }
+                    }
+
+                    // at least one in known state: set an approximate cooldown
+                    // (will likely be overwritten in a moment when the last
+                    // response in the cd window is received, and
+                    // it calls ep.update_status_200())
+                    if let Some(id) = likely_cd_ep_id {
+
+                        let ep = endpoints_ref.get_mut(&id).unwrap();
+                        println!("forcing cooldown {:?}!", likely_cd.unwrap().1);
+                        ep.force_cd(likely_cd.unwrap().1);
+                    }
+                    // they're all in unkown state? Then cd all of them
+                    else {
+                        for id in endpoint_ids {
+                            let ep = endpoints_ref.get_mut(&id).unwrap();
+                            let dur = tokio::time::Duration::from_secs(15);
+                            println!("forcing cooldown {:?}!", &dur);
+                            ep.force_cd(dur);
                         }
                     }
                 }
 
-                if let Some(id) = likely_cd_ep_id {
-
-                    let ep = endpoints_ref.get_mut(&id).unwrap();
-                    println!("forcing cooldown {:?}!", likely_cd.unwrap().1);
-                    ep.force_cd(likely_cd.unwrap().1);
-                }
-                // they're all in unkown state? Then cd all of them
-                else {
-                    for id in endpoint_ids {
-                        let ep = endpoints_ref.get_mut(&id).unwrap();
-                        let dur = tokio::time::Duration::from_secs(5);
-                        println!("forcing cooldown {:?}!", &dur);
-                        ep.force_cd(dur);
-                    }
-                }
             },
 
             // else do nothing
@@ -560,5 +579,46 @@ mod tests {
                 assert!(dto.is_ok());
             }
         });
+    }
+
+    /// Tests the ability for a retried request to backoff when it hits
+    /// a rate limit. For this test, we test the backoff using two concurrent
+    /// requests to hit the rate limit just to ensure both requests will properly
+    /// back off and not panic.
+    /// 
+    /// # Remarks
+    /// 
+    /// In this test we attempt to limit the 120 requests per 60s rate-limit
+    /// bucket, but this obviously depends on the current API being limited
+    /// by such a bucket. 
+    /// 
+    /// We `#[ignore]` this test because the backoff is a pain
+    /// in the butt to wait for (120s as stated), so you'll need to run
+    /// the test specifically or with `cargo test -- --ignored` to run this.
+    /// 
+    /// > **TODO**: If the API key has a higher limit, we need to
+    /// > find a way to place where to put this constant
+    /// > and change which bucket we try to hit
+    /// 
+    #[test]
+    #[ignore]
+    fn test_rate_limit_backoff_concurrent() {
+
+        let mut rt = Runtime::new().unwrap();
+        let ctx = Context::new(&get_key());
+
+        for _ in 0..61 { // rate limit on the 120 bucket
+            rt.block_on(async{
+
+                //issue to concurrent requests for a resource
+                let (dto1, dto2) = tokio::join!(
+                    ctx.query_summoner_v4_by_summoner_name(Region::Na1, "hi", 3),
+                    ctx.query_summoner_v4_by_summoner_name(Region::Na1, "hi", 3)
+                );
+
+                assert!(dto1.is_ok());
+                assert!(dto2.is_ok());
+            });
+        }
     }
 }
