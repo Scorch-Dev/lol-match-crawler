@@ -59,7 +59,6 @@ impl Context {
     }
 
     /** SUMMONER V4 METHODS */
-    #[allow(dead_code)]
     pub async fn query_summoner_v4_by_summoner_name(
         &self, region : Region, summoner_name : &str, retry_count : usize)->Result<summoner_v4::SummonerDto>{
 
@@ -121,7 +120,6 @@ impl Context {
     }
     
     /* MATCH V4 METHODS */
-    #[allow(dead_code)]
     pub async fn query_match_v4_matchlist_by_account(
         &self, region : Region, encrypted_account_id : &str, retry_count : usize) -> Result<match_v4::MatchlistDto> {
 
@@ -151,7 +149,6 @@ impl Context {
         Ok(data)
     }
 
-    #[allow(dead_code)]
     pub async fn query_match_v4_match_by_id(
         &self, region : Region, match_id : i64, retry_count : usize) -> Result<match_v4::MatchDto> {
 
@@ -187,7 +184,7 @@ impl Context {
 
         let mut res = query_func().await;
 
-        for i in 0..retry_count {
+        for _ in 0..retry_count {
             match res {
                 Ok(_) => return res,
                 Err(e) if e.can_retry() => {
@@ -506,12 +503,7 @@ mod tests {
 
     use super::{Context, Region};
     use tokio::runtime::Runtime;
-
-    fn get_key() -> String {
-        std::fs::read_to_string("./key.txt")
-            .expect("Can't open file <project root>/key.txt. Please put the riot api key in this file.")
-            .trim().to_string()
-    }
+    use crate::util::get_key;
 
     /// A test to query each method of each implemented
     /// service and simply check that the structs received

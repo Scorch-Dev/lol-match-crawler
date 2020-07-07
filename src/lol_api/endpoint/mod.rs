@@ -241,12 +241,12 @@ impl Endpoint {
     /// * `Unkown` - haven't queried this endpoint yet, so we'll use this query as a probe
     /// * `Normal` - g2g as far as we can tell based on received responses
     /// * `JustOffCooldown` - just came off a cooldown but may potentially 429 again
-    pub fn can_query(&mut self)->bool {
-        match &self.status {
-            Status::Normal | Status::Unkown | Status::JustOffCooldown(_) => true,
-            _ => false,
-        }
-    }
+    // pub fn can_query(&mut self)->bool {
+    //    match &self.status {
+    //        Status::Normal | Status::Unkown | Status::JustOffCooldown(_) => true,
+    //        _ => false,
+    //    }
+    //}
 
     /// Gets the current status
     /// 

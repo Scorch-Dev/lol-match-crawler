@@ -11,24 +11,24 @@ use tokio::sync::Mutex;
 
 struct CrawlerInner {
     context : lol_api::Context,
-    file_out : File,
+    file_out : Mutex<File>,
     found_match_ids : Mutex<HashSet<i64>>,
 }
 
 #[derive(Clone)]
-struct Crawler {
+pub struct Crawler {
     inner : Arc<CrawlerInner>,
 }
 
 impl Crawler {
 
-    #[allow(dead_code)]
     pub async fn new(context : lol_api::Context) -> Result<Crawler> {
-        let file_out = File::create(format!("lol_data-{}", chrono::Utc::now().format("%F-%T"))).await?;
+        let f_name = format!("./lol_data-{}", chrono::Utc::now().format("%F-%H-%M-%S"));
+        let file_out = File::create(f_name).await?;
         Ok(Crawler {
             inner : Arc::new(CrawlerInner {
                 context : context,
-                file_out : file_out,
+                file_out : Mutex::new(file_out),
                 found_match_ids : Mutex::new(HashSet::new()),
             })
         })
@@ -80,7 +80,7 @@ impl Crawler {
 
             // get match, record data, and add to 'seen' set
             let match_dto = inner.context.query_match_v4_match_by_id(lol_api::Region::Na1, match_id, 3).await?;
-            //TODO: save match data to file
+            Self::write_match_to_file(inner.clone(), &match_dto).await?;
 
             // get next match from that participants match history
             if i != (match_count - 1) {
@@ -93,7 +93,7 @@ impl Crawler {
         Ok(())
     }
 
-    async fn write_match_to_file(file : &mut File, match_dto : &lol_api::MatchDto) -> Result<()> {
+    async fn write_match_to_file(inner : Arc<CrawlerInner>, match_dto : &lol_api::MatchDto) -> Result<()> {
 
         let mut line_items : Vec<String> = Vec::new();
 
@@ -130,8 +130,35 @@ impl Crawler {
         // push the line to the output
         let mut line = line_items.join(",");
         line.push('\n');
-        file.write_all(&line.into_bytes()).await?;
+        
+        let mut file_lock = inner.file_out.lock().await;
+        file_lock.write_all(&line.into_bytes()).await?;
 
         Ok(())
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+
+    use super::Crawler;
+    use crate::lol_api::Context;
+    use tokio::runtime::Runtime;
+
+    /// ctor test for the constructor. 
+    /// Makes sure we can do things
+    /// like construct the output file 
+    /// and keep track of the internal state without exploding
+    #[test]
+    fn test_ctor() {
+        let mut rt = Runtime::new().expect("couldn't instantiate tokio runtime!");
+        let key = crate::util::get_key();
+        let ctx = Context::new(&key);
+
+        rt.block_on(async move {
+            let crawler = Crawler::new(ctx).await;
+            assert!(crawler.is_ok());
+        });
     }
 }
